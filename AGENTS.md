@@ -20,6 +20,9 @@ that has the scientific stack plus VMEC + NEAT installed.
   - `python3 -m pip install numpy scipy pandas matplotlib mpi4py simsopt booz_xform`
   - VMEC extension (required by `simsopt.mhd.Vmec`): `python3 -m pip install git+ssh://git@github.com/hiddenSymmetries/VMEC2000.git`
   - NEAT (required by `from neat...`): `python3 -m pip install -e ../NEAT`
+- If VMEC fails to build due to hardcoded compiler/library paths, edit the
+  VMEC2000 `cmake_config_file.json` to point at your `mpicc`/`mpifort` and
+  NetCDF include/lib directories (e.g. `/usr/include`, `/usr/lib`).
 - Run optimization: `mpirun -n 4 python3 main.py` (or `python3 main.py` for
   serial experiments).
 - Plot results (after an optimization run): `python3 plot_opt.py`.
