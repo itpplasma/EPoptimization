@@ -73,13 +73,30 @@ diff_abs_step = 1e-2
 output_path_parameters=f'output_{optimizer}_{QA_or_QH_or_QI}.csv'
 ######################################
 ######################################
+fast_mode = os.environ.get('EP_OPT_FAST', '0') == '1'
+if fast_mode:
+    MAXITER = int(os.environ.get('EP_OPT_FAST_MAXITER', '2'))
+    max_modes = [int(os.environ.get('EP_OPT_FAST_MAXMODE', '1'))]
+    plot_result = False
+    nparticles = int(os.environ.get('EP_OPT_FAST_NPARTICLES', '50'))
+    nsamples = int(os.environ.get('EP_OPT_FAST_NSAMPLES', '200'))
+    tfinal = float(os.environ.get('EP_OPT_FAST_TFINAL', '1e-6'))
+    nper = int(os.environ.get('EP_OPT_FAST_NPER', '40'))
+    npoiper = int(os.environ.get('EP_OPT_FAST_NPOIPER', '40'))
+    npoiper2 = int(os.environ.get('EP_OPT_FAST_NPOIPER2', '30'))
+    notrace_passing = 1
+
 if QA_or_QH_or_QI == 'QA': nfp=2
 elif QA_or_QH_or_QI == 'QH': nfp=4
 elif QA_or_QH_or_QI == 'QI': nfp=3 # Change it later to vmec.indata.nfp
 OUT_DIR_APPENDIX=f'out_s{s_initial}_NFP{nfp}'
 if opt_quasisymmetry: OUT_DIR_APPENDIX+=f'_{QA_or_QH_or_QI}'
 if opt_well: OUT_DIR_APPENDIX+=f'_well'
-OUT_DIR = os.path.join(this_path, OUT_DIR_APPENDIX)
+if fast_mode:
+    out_base = os.environ.get('EP_OPT_FAST_OUTDIR_BASE', '/tmp')
+    OUT_DIR = os.path.join(out_base, OUT_DIR_APPENDIX + '_smoke')
+else:
+    OUT_DIR = os.path.join(this_path, OUT_DIR_APPENDIX)
 os.makedirs(OUT_DIR, exist_ok=True)
 ######################################
 dest = os.path.join(OUT_DIR,OUT_DIR_APPENDIX+'_previous')
@@ -203,7 +220,7 @@ for max_mode in max_modes:
     elif optimizer == 'dual_annealing':
         initial_temp = 1000
         visit = 2.0
-        no_local_search = False
+        no_local_search = (os.environ.get('EP_OPT_NO_LOCAL_SEARCH', '0') == '1') or fast_mode
         # bounds = [(np.max([-10*np.abs(dof),-0.21]),np.min([0.21,10*np.abs(dof)])) for dof in dofs]
         bounds = [(-0.25,0.25) for _ in dofs]
         res = dual_annealing(fun, bounds=bounds, maxiter=MAXITER, initial_temp=initial_temp,visit=visit, no_local_search=no_local_search, x0=dofs)
@@ -253,7 +270,8 @@ if MPI.COMM_WORLD.rank == 0:
             os.remove(threed_file)
         for threed_file in glob.glob("input.*"):
             os.remove(threed_file)
-        os.remove('fort.6601')
+        if os.path.isfile('fort.6601'):
+            os.remove('fort.6601')
     except Exception as e:
         pprint(e)
     ##################################################
