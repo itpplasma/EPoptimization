@@ -78,13 +78,14 @@ if fast_mode:
     MAXITER = int(os.environ.get('EP_OPT_FAST_MAXITER', '2'))
     max_modes = [int(os.environ.get('EP_OPT_FAST_MAXMODE', '1'))]
     plot_result = False
+    s_initial = float(os.environ.get('EP_OPT_FAST_S_INITIAL', str(s_initial)))
     nparticles = int(os.environ.get('EP_OPT_FAST_NPARTICLES', '50'))
     nsamples = int(os.environ.get('EP_OPT_FAST_NSAMPLES', '200'))
-    tfinal = float(os.environ.get('EP_OPT_FAST_TFINAL', '1e-6'))
+    tfinal = float(os.environ.get('EP_OPT_FAST_TFINAL', '1e-5'))
     nper = int(os.environ.get('EP_OPT_FAST_NPER', '40'))
     npoiper = int(os.environ.get('EP_OPT_FAST_NPOIPER', '40'))
     npoiper2 = int(os.environ.get('EP_OPT_FAST_NPOIPER2', '30'))
-    notrace_passing = 1
+    notrace_passing = int(os.environ.get('EP_OPT_FAST_NOTRACE_PASSING', '0'))
 
 if QA_or_QH_or_QI == 'QA': nfp=2
 elif QA_or_QH_or_QI == 'QH': nfp=4
