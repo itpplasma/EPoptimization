@@ -159,7 +159,6 @@ def EPcostFunction(v: Vmec):
                 break
     final_loss_fraction = np.mean(final_loss_fraction_array)
     final_effective_time = np.min([np.max([np.mean(effective_time_array),0]),10])
-    g_field_temp.simple_main.finalize()
     mirror_ratio = MirrorRatioPen(v=v, output_mirror=True)
     max_elongation = MaxElongationPen(vmec=v, return_elongation=True)
     print(f'Loss = {(100*final_loss_fraction):1f}% with '
