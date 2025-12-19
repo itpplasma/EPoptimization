@@ -117,16 +117,25 @@ else:
 os.makedirs(OUT_DIR, exist_ok=True)
 ######################################
 dest = os.path.join(OUT_DIR,OUT_DIR_APPENDIX+'_previous')
-if use_previous_results_if_available and (os.path.isfile(os.path.join(OUT_DIR,'input.final')) or os.path.isfile(os.path.join(dest,'input.final'))):
+checkpoint_name = "input.checkpoint"
+checkpoint_path = os.path.join(OUT_DIR, checkpoint_name)
+final_path = os.path.join(OUT_DIR, "input.final")
+resume_candidates = [
+    final_path,
+    checkpoint_path,
+    os.path.join(dest, "input.final"),
+    os.path.join(dest, checkpoint_name),
+]
+if use_previous_results_if_available and any(os.path.isfile(p) for p in resume_candidates):
     if MPI.COMM_WORLD.rank == 0:
         os.makedirs(dest, exist_ok=True)
-        if os.path.isfile(os.path.join(OUT_DIR, 'input.final')) and not os.path.isfile(os.path.join(dest, 'input.final')):
+        if os.path.isfile(final_path) and not os.path.isfile(os.path.join(dest, "input.final")):
             files = os.listdir(OUT_DIR)
             for f in files:
                 shutil.move(os.path.join(OUT_DIR, f), dest)
     else:
         time.sleep(0.5)
-    filename = os.path.join(dest, 'input.final')
+    filename = os.path.join(dest, "input.final") if os.path.isfile(os.path.join(dest, "input.final")) else os.path.join(dest, checkpoint_name)
 else:
     input_override = os.environ.get("EP_OPT_VMEC_INPUT", "").strip()
     if input_override:
@@ -400,7 +409,37 @@ for max_mode in max_modes:
         no_local_search = (os.environ.get('EP_OPT_NO_LOCAL_SEARCH', '0') == '1') or fast_mode
         # bounds = [(np.max([-10*np.abs(dof),-0.21]),np.min([0.21,10*np.abs(dof)])) for dof in dofs]
         bounds = [(-0.25,0.25) for _ in dofs]
-        res = dual_annealing(fun, bounds=bounds, maxiter=MAXITER, initial_temp=initial_temp,visit=visit, no_local_search=no_local_search, x0=dofs)
+        checkpoint_enable = os.environ.get("EP_OPT_CHECKPOINT", "1") == "1"
+        checkpoint_every = int(os.environ.get("EP_OPT_CHECKPOINT_EVERY", "1"))
+        best = {"n": 0, "f": float("inf")}
+
+        def _checkpoint_callback(x, f, context):
+            if (not checkpoint_enable) or MPI.COMM_WORLD.rank != 0:
+                return False
+            best["n"] += 1
+            if (best["n"] % checkpoint_every) != 0:
+                return False
+            if float(f) >= best["f"]:
+                return False
+            best["f"] = float(f)
+            try:
+                surf.x = np.asarray(x)
+                vmec.write_input(checkpoint_path)
+                pprint(f"Wrote {checkpoint_name} with objective={best['f']:.6g}")
+            except Exception as e:
+                pprint(f"Checkpoint write failed: {e}")
+            return False
+
+        res = dual_annealing(
+            fun,
+            bounds=bounds,
+            maxiter=MAXITER,
+            initial_temp=initial_temp,
+            visit=visit,
+            no_local_search=no_local_search,
+            x0=dofs,
+            callback=_checkpoint_callback,
+        )
     elif optimizer == 'basinhopping':
         stepsize_minimizer = 0.5
         T_minimizer = 1.0
@@ -448,13 +487,16 @@ if MPI.COMM_WORLD.rank == 0:
         for threed_file in glob.glob("wout_*"):
             os.remove(threed_file)
         for threed_file in glob.glob("input.*"):
+            base = os.path.basename(threed_file)
+            if base in ("input.final", checkpoint_name):
+                continue
             os.remove(threed_file)
         if os.path.isfile('fort.6601'):
             os.remove('fort.6601')
     except Exception as e:
         pprint(e)
     ##################################################
-    vmec.write_input(os.path.join(OUT_DIR, f'input.final'))
+    vmec.write_input(final_path)
 ######################################
 if plot_result and MPI.COMM_WORLD.rank==0:
     vmec_final = Vmec(os.path.join(OUT_DIR, f'input.final'), mpi=mpi)
