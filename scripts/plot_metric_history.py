@@ -34,6 +34,16 @@ def parse_log(path: Path) -> dict[str, list[float]]:
     return {"loss_pct": loss, "score": score, "objective": objective}
 
 
+def cumulative_best(values: list[float]) -> list[float]:
+    best: list[float] = []
+    current = float("inf")
+    for v in values:
+        if v < current:
+            current = v
+        best.append(current)
+    return best
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot SIMPLE proxy metric evolution from an EPoptimization stdout log."
@@ -49,28 +59,33 @@ def main() -> None:
 
     fig, ax1 = plt.subplots(figsize=(10, 5))
     x_obj = list(range(len(series["objective"])))
-    ax1.plot(x_obj, series["objective"], label="objective = 1 - score", linewidth=1.2)
+    best_obj = cumulative_best(series["objective"])
+    ax1.plot(
+        x_obj,
+        best_obj,
+        label="best-so-far objective = 1 - score",
+        linewidth=1.6,
+    )
     ax1.set_xlabel("Evaluation index")
-    ax1.set_ylabel("Objective")
+    ax1.set_ylabel("Objective (best-so-far)")
     ax1.grid(True, alpha=0.25)
 
     ax2 = ax1.twinx()
     if series["loss_pct"]:
         x_loss = list(range(len(series["loss_pct"])))
+        best_loss = cumulative_best(series["loss_pct"])
         ax2.plot(
             x_loss,
-            series["loss_pct"],
-            label="loss (%)",
-            linewidth=1.0,
+            best_loss,
+            label="best-so-far loss at t_final (%)",
+            linewidth=1.4,
             color="tab:orange",
             alpha=0.8,
         )
     ax2.set_ylabel("Loss (%)")
     ax2.set_ylim(0.0, 100.0)
 
-    best = min(series["objective"])
-    ax1.axhline(best, linestyle="--", linewidth=1.0, color="tab:green", alpha=0.7)
-
+    best = min(best_obj)
     title = args.title or f"{args.log.name} (best objective={best:.6g})"
     fig.suptitle(title)
 
@@ -89,4 +104,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
