@@ -33,7 +33,7 @@ def pprint(*args, **kwargs):
 ############################################################################
 MAXITER = 500
 max_modes = [1, 2]
-QA_or_QH_or_QI = 'QA'
+QA_or_QH_or_QI = 'QI'
 opt_quasisymmetry = False
 opt_EP = True
 opt_well = False
@@ -115,9 +115,13 @@ if use_previous_results_if_available and (os.path.isfile(os.path.join(OUT_DIR,'i
         time.sleep(0.5)
     filename = os.path.join(dest, 'input.final')
 else:
-    if QA_or_QH_or_QI == 'QA': filename = os.path.join(this_path, 'initial_configs', 'input.nfp2_QA')
-    elif QA_or_QH_or_QI == 'QH': filename = os.path.join(this_path, 'initial_configs', 'input.nfp4_QH')
-    elif QA_or_QH_or_QI == 'QI': filename = os.path.join(this_path, 'initial_configs', 'input.QI')
+    input_override = os.environ.get("EP_OPT_VMEC_INPUT", "").strip()
+    if input_override:
+        filename = input_override if os.path.isabs(input_override) else os.path.join(this_path, input_override)
+    else:
+        if QA_or_QH_or_QI == 'QA': filename = os.path.join(this_path, 'initial_configs', 'input.nfp2_QA')
+        elif QA_or_QH_or_QI == 'QH': filename = os.path.join(this_path, 'initial_configs', 'input.nfp4_QH')
+        elif QA_or_QH_or_QI == 'QI': filename = os.path.join(this_path, 'initial_configs', 'input.QI')
 os.chdir(OUT_DIR)
 vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = True
@@ -157,6 +161,7 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
         "ntestpart": int(nparticles_),
         "trace_time": 1.0e-6,
         "ntimstep": 2,
+        "sbeg": float(s_initial),
         "multharm": int(multharm),
         "ns_s": int(ns_s),
         "ns_tp": int(ns_tp),
@@ -201,6 +206,7 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
         deterministic=True,
         notrace_passing=notrace_passing,
     )
+    cfg["sbeg"] = float(s_initial)
     cfg["ntimstep"] = int(nsamples_)
     cfg["npoiper"] = int(npoiper)
     cfg["npoiper2"] = int(npoiper2)
