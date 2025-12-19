@@ -312,12 +312,16 @@ def EPcostFunction(v: Vmec):
     except Exception as e:
         print(e)
         return 1e3
-    metrics = run_simple_metrics_for_vmec(
-        v,
-        nparticles_=nparticles,
-        tfinal_=tfinal,
-        nsamples_=nsamples,
-    )
+    try:
+        metrics = run_simple_metrics_for_vmec(
+            v,
+            nparticles_=nparticles,
+            tfinal_=tfinal,
+            nsamples_=nsamples,
+        )
+    except Exception as e:
+        print(f"SIMPLE metrics failed: {e}")
+        return 1e3
     final_loss_fraction = metrics["loss_fraction"]
     final_effective_time = metrics["effective_time"]
     mirror_ratio = MirrorRatioPen(v=v, output_mirror=True)
