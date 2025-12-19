@@ -33,7 +33,7 @@ def pprint(*args, **kwargs):
 ############################################################################
 MAXITER = 500
 max_modes = [1, 2]
-QA_or_QH_or_QI = 'QI'
+QA_or_QH_or_QI = 'QA'
 opt_quasisymmetry = False
 opt_EP = True
 opt_well = False

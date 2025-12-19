@@ -1,0 +1,7 @@
+This directory includes `input.ALPES_QUASR_0021326_1`, a VMEC input file used
+in the ALPES project and originating from the QUASR database model 0021326.
+
+Sources:
+- ALPES repo: /home/ert/code/ALPES (MIT licensed, see LICENSE.ALPES)
+- QUASR model page: https://quasr.flatironinstitute.org/model/0021326
+- QUASR dataset DOI: 10.5281/zenodo.10944430 (MIT licensed, see LICENSE.QUASR)
