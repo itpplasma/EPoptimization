@@ -42,7 +42,7 @@ opt_Mirror = True
 opt_Elongation = True
 plot_result = True
 optimizer = 'dual_annealing' # least_squares_diff, least_squares, basinhopping, differential_evolution, dual_annealing
-use_previous_results_if_available = False
+use_previous_results_if_available = os.environ.get("EP_OPT_RESUME", "0") == "1"
 
 weight_optEP = 100.0
 weight_opt_Mirror = 100.0
@@ -89,6 +89,19 @@ if fast_mode:
     npoiper = int(os.environ.get('EP_OPT_FAST_NPOIPER', '40'))
     npoiper2 = int(os.environ.get('EP_OPT_FAST_NPOIPER2', '30'))
     notrace_passing = int(os.environ.get('EP_OPT_FAST_NOTRACE_PASSING', '0'))
+else:
+    MAXITER = int(os.environ.get("EP_OPT_MAXITER", str(MAXITER)))
+    nparticles = int(os.environ.get("EP_OPT_NPARTICLES", str(nparticles)))
+    nsamples = int(os.environ.get("EP_OPT_NSAMPLES", str(nsamples)))
+    tfinal = float(os.environ.get("EP_OPT_TFINAL", str(tfinal)))
+    multharm = int(os.environ.get("EP_OPT_MULTHARM", str(multharm)))
+    ns_s = int(os.environ.get("EP_OPT_NS_S", str(ns_s)))
+    ns_tp = int(os.environ.get("EP_OPT_NS_TP", str(ns_tp)))
+    nper = int(os.environ.get("EP_OPT_NPER", str(nper)))
+    npoiper = int(os.environ.get("EP_OPT_NPOIPER", str(npoiper)))
+    npoiper2 = int(os.environ.get("EP_OPT_NPOIPER2", str(npoiper2)))
+    notrace_passing = int(os.environ.get("EP_OPT_NOTRACE_PASSING", str(notrace_passing)))
+    plot_result = os.environ.get("EP_OPT_PLOT", "1") == "1"
 
 if QA_or_QH_or_QI == 'QA': nfp=2
 elif QA_or_QH_or_QI == 'QH': nfp=4
