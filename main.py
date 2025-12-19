@@ -150,8 +150,40 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
                 simple_executable = str(candidate)
                 break
 
-    B_scale = 5.7/v.wout.b0/redux_B  # Scale the magnetic field by a factor
-    Aminor_scale = 1.7/v.wout.Aminor_p/redux_Aminor  # Scale the machine size by a factor
+    # Reactor-size mapping knobs. Default behavior scales VMEC geometry/B into a target
+    # machine, keeping alpha energy fixed at 3.5 MeV.
+    #
+    # For "scale model" experiments, keep the *small* VMEC equilibrium (B, size) as-is,
+    # and instead scale down alpha energy (via SIMPLE's facE_al) to match the same
+    # dimensionless Larmor radius rho/a one would get from the reactor-size mapping.
+    #
+    # SIMPLE uses E_alpha = 3.5d6 / facE_al (eV), so increasing facE_al reduces energy.
+    scale_model = os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1"
+    base_facE_al = float(os.environ.get("EP_OPT_FAC_E_AL", "1.0"))
+
+    # Some VMEC runs may not converge early in optimization; guard access to wout fields.
+    b0 = getattr(v.wout, "b0", None)
+    aminor_p = getattr(v.wout, "Aminor_p", None)
+    if b0 is None or aminor_p is None:
+        raise RuntimeError(
+            "VMEC output missing b0/Aminor_p (likely non-converged equilibrium); "
+            f"b0={b0}, Aminor_p={aminor_p}"
+        )
+
+    B_scale_target = 5.7 / float(b0) / redux_B
+    Aminor_scale_target = 1.7 / float(aminor_p) / redux_Aminor
+
+    if scale_model:
+        B_scale = 1.0
+        Aminor_scale = 1.0
+        # Match rho/a from the reactor-size mapping:
+        # rho/a ∝ sqrt(E)/(B*a), so to undo (B_scale_target, Aminor_scale_target),
+        # scale energy by 1/(B_scale_target*Aminor_scale_target)^2.
+        facE_al = base_facE_al * (B_scale_target * Aminor_scale_target) ** 2
+    else:
+        B_scale = float(B_scale_target)
+        Aminor_scale = float(Aminor_scale_target)
+        facE_al = base_facE_al
 
     # Generate a trapped-focused starting distribution:
     # SIMPLE's default pitch sampling can yield mostly passing particles for some equilibria.
@@ -170,6 +202,7 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
         "nper": int(nper),
         "vmec_B_scale": float(B_scale),
         "vmec_RZ_scale": float(Aminor_scale),
+        "facE_al": float(facE_al),
         "deterministic": True,
         "startmode": 1,
     }
@@ -213,6 +246,7 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
     cfg["nper"] = int(nper)
     cfg["vmec_B_scale"] = float(B_scale)
     cfg["vmec_RZ_scale"] = float(Aminor_scale)
+    cfg["facE_al"] = float(facE_al)
 
     weights = {
         "confined_trapped": 1.0,
@@ -248,6 +282,9 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
     return {
         "loss_fraction": loss_fraction,
         "effective_time": effective_time,
+        "vmec_B_scale": float(B_scale),
+        "vmec_RZ_scale": float(Aminor_scale),
+        "facE_al": float(facE_al),
         "trapped_confined_fraction": float(result.trapped_confined_fraction),
         "ideal_fraction": float(result.ideal_fraction),
         "jpar_good_fraction": float(result.jpar_good_fraction),
@@ -279,6 +316,9 @@ def EPcostFunction(v: Vmec):
     + f'aspect ratio={v.aspect():1f} took {(time.time()-start_time):1f}s')
     print(
         "SIMPLE proxy metrics: "
+        f"facE_al={metrics['facE_al']:.6g}, "
+        f"vmec_B_scale={metrics['vmec_B_scale']:.6g}, "
+        f"vmec_RZ_scale={metrics['vmec_RZ_scale']:.6g}, "
         f"confined_trapped={metrics['trapped_confined_fraction']:.6f}, "
         f"ideal={metrics['ideal_fraction']:.6f}, "
         f"jpar={metrics['jpar_good_fraction']:.6f}, "
