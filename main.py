@@ -16,8 +16,11 @@ from simsopt.util import MpiPartition
 from simsopt.solve import least_squares_mpi_solve, least_squares_serial_solve
 from simsopt.mhd import QuasisymmetryRatioResidual
 from simsopt.objectives import LeastSquaresProblem
-from neat.fields import Simple
-from neat.tracing import ChargedParticleEnsemble, ParticleEnsembleOrbit_Simple
+from neat.simple_classification import (
+    default_fast_classification_config,
+    run_simple_fast_classification,
+    run_simple_loss,
+)
 from scipy.optimize import minimize, basinhopping, differential_evolution, dual_annealing
 from Alan_objectives import MaxElongationPen, MirrorRatioPen
 mpi = MpiPartition()
@@ -53,7 +56,7 @@ elif QA_or_QH_or_QI == 'QI': aspect_ratio_target = 8
 
 s_initial = 0.3  # initial normalized toroidal magnetic flux (radial VMEC coordinate)
 nparticles = 600  # number of particles
-tfinal = 6e-5  # total time of tracing in seconds
+tfinal = 1e-2  # total time of tracing in seconds
 nsamples = 1500 # number of time steps
 multharm = 3 # angular grid factor
 ns_s = 3 # spline order over s
@@ -119,7 +122,6 @@ os.chdir(OUT_DIR)
 vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = True
 surf = vmec.boundary
-g_particle = ChargedParticleEnsemble(r_initial=s_initial)
 ######################################
 def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio,max_elongation):
     keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation']])
@@ -132,33 +134,136 @@ def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio
 optElongation = make_optimizable(MaxElongationPen, vmec)
 optMirror = make_optimizable(MirrorRatioPen, vmec)
 ######################################
+def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, nsamples_: int):
+    simple_executable = os.environ.get("SIMPLE_X") or os.environ.get("SIMPLE_EXE")
+    if simple_executable is None:
+        candidates = [
+            Path("/home/ert/code/SIMPLE/build/simple.x"),
+            (this_path / ".." / "NEAT" / "external" / "simple" / "build" / "simple.x").resolve(),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                simple_executable = str(candidate)
+                break
+
+    B_scale = 5.7/v.wout.b0/redux_B  # Scale the magnetic field by a factor
+    Aminor_scale = 1.7/v.wout.Aminor_p/redux_Aminor  # Scale the machine size by a factor
+
+    # Generate a trapped-focused starting distribution:
+    # SIMPLE's default pitch sampling can yield mostly passing particles for some equilibria.
+    # We run a very short sampling pass (writes start.dat), then overwrite pitch to be small.
+    pitch_max = float(os.environ.get("EP_OPT_PITCH_MAX", "0.05"))
+    sample_cfg = {
+        "ntestpart": int(nparticles_),
+        "trace_time": 1.0e-6,
+        "ntimstep": 2,
+        "multharm": int(multharm),
+        "ns_s": int(ns_s),
+        "ns_tp": int(ns_tp),
+        "npoiper": int(npoiper),
+        "npoiper2": int(npoiper2),
+        "nper": int(nper),
+        "vmec_B_scale": float(B_scale),
+        "vmec_RZ_scale": float(Aminor_scale),
+        "deterministic": True,
+        "startmode": 1,
+    }
+    sample_result = run_simple_loss(
+        wout_path=v.output_file,
+        config=sample_cfg,
+        simple_executable=simple_executable,
+        keep_workdir=True,
+        timeout_s=300.0,
+    )
+    start_path = sample_result.workdir / "start.dat"
+    if not start_path.exists():
+        raise FileNotFoundError(start_path)
+    start = np.loadtxt(start_path, ndmin=2)
+    if start.shape[0] != int(nparticles_) or start.shape[1] < 5:
+        raise ValueError(f"Unexpected start.dat shape: {start.shape}")
+    rng = np.random.default_rng(0)
+    if pitch_max <= 0.0:
+        start[:, 4] = 0.0
+    else:
+        start[:, 4] = rng.uniform(-pitch_max, pitch_max, size=start.shape[0])
+    trapped_start_path = sample_result.workdir / "start_trapped.dat"
+    np.savetxt(trapped_start_path, start)
+
+    cfg = default_fast_classification_config(
+        ntestpart=nparticles_,
+        trace_time_s=tfinal_,
+        tcut_s=-1.0,
+        multharm=multharm,
+        ns_s=ns_s,
+        ns_tp=ns_tp,
+        class_plot=True,
+        fast_class=False,
+        deterministic=True,
+        notrace_passing=notrace_passing,
+    )
+    cfg["ntimstep"] = int(nsamples_)
+    cfg["npoiper"] = int(npoiper)
+    cfg["npoiper2"] = int(npoiper2)
+    cfg["nper"] = int(nper)
+    cfg["vmec_B_scale"] = float(B_scale)
+    cfg["vmec_RZ_scale"] = float(Aminor_scale)
+
+    weights = {
+        "confined_trapped": 1.0,
+        "ideal_trapped": 1.0,
+        "jpar_trapped": 1.0,
+    }
+
+    result = run_simple_fast_classification(
+        wout_path=v.output_file,
+        config=cfg,
+        simple_executable=simple_executable,
+        start_dat_path=trapped_start_path,
+        weights=weights,
+        w_prompt=0.0,
+    )
+
+    shutil.rmtree(sample_result.workdir, ignore_errors=True)
+
+    if result.confined_fraction is None or result.confined_fraction.size == 0:
+        loss_fraction = 0.0
+    else:
+        loss_fraction = float(1.0 - (result.confined_fraction[-1, 1] + result.confined_fraction[-1, 2]))
+
+    lost_times_array = tfinal_ - result.times_lost[:, 1]
+    lost_times_array = lost_times_array[lost_times_array != 0.0]
+    if np.asarray(lost_times_array).size == 0:
+        lost_times_array = np.array([tfinal_])
+    effective_time = float(np.mean(lost_times_array) / (np.max(lost_times_array) + 1e-9))
+    effective_time = float(np.min([np.max([effective_time, 0.0]), 10.0]))
+
+    objective = 1.0 - float(result.score)
+
+    return {
+        "loss_fraction": loss_fraction,
+        "effective_time": effective_time,
+        "trapped_confined_fraction": float(result.trapped_confined_fraction),
+        "ideal_fraction": float(result.ideal_fraction),
+        "jpar_good_fraction": float(result.jpar_good_fraction),
+        "score": float(result.score),
+        "objective": float(objective),
+    }
+
+
 def EPcostFunction(v: Vmec):
     start_time = time.time()
     try: v.run()
     except Exception as e:
         print(e)
         return 1e3
-    B_scale = 5.7/v.wout.b0/redux_B  # Scale the magnetic field by a factor
-    Aminor_scale = 1.7/v.wout.Aminor_p/redux_Aminor  # Scale the machine size by a factor
-    g_field_temp = Simple(wout_filename=v.output_file, B_scale=B_scale, Aminor_scale=Aminor_scale, multharm=multharm,ns_s=ns_s,ns_tp=ns_tp)
-    final_loss_fraction_array = []
-    effective_time_array = []
-    for i in range(nruns_opt_average): # Average over a given number of runs
-        for j in range(0,3): # Try three times the same orbits, if not able continue
-            while True:
-                try:
-                    g_orbits_temp = ParticleEnsembleOrbit_Simple(g_particle,g_field_temp,tfinal=tfinal,nparticles=nparticles,nsamples=nsamples,notrace_passing=notrace_passing,nper=nper,npoiper=npoiper,npoiper2=npoiper2)
-                    final_loss_fraction_array.append(g_orbits_temp.total_particles_lost)
-                    lost_times_array = tfinal-g_field_temp.params.times_lost
-                    lost_times_array = lost_times_array[lost_times_array!=0.0]
-                    if np.asarray(lost_times_array).size==0: lost_times_array=[tfinal]
-                    effective_time_array.append(np.mean(lost_times_array)/(np.max(lost_times_array)+1e-9))
-                except ValueError as error_print:
-                    print(f'Try {j} of ParticleEnsembleOrbit_Simple gave error:',error_print)
-                    continue
-                break
-    final_loss_fraction = np.mean(final_loss_fraction_array)
-    final_effective_time = np.min([np.max([np.mean(effective_time_array),0]),10])
+    metrics = run_simple_metrics_for_vmec(
+        v,
+        nparticles_=nparticles,
+        tfinal_=tfinal,
+        nsamples_=nsamples,
+    )
+    final_loss_fraction = metrics["loss_fraction"]
+    final_effective_time = metrics["effective_time"]
     mirror_ratio = MirrorRatioPen(v=v, output_mirror=True)
     max_elongation = MaxElongationPen(vmec=v, return_elongation=True)
     print(f'Loss = {(100*final_loss_fraction):1f}% with '
@@ -166,8 +271,15 @@ def EPcostFunction(v: Vmec):
     # + 'dofs = {v.x}, mean_iota={v.mean_iota()} and '
     + f'mirror ratio={mirror_ratio:1f}, max elongation={max_elongation:1f} and '
     + f'aspect ratio={v.aspect():1f} took {(time.time()-start_time):1f}s')
+    print(
+        "SIMPLE proxy metrics: "
+        f"confined_trapped={metrics['trapped_confined_fraction']:.6f}, "
+        f"ideal={metrics['ideal_fraction']:.6f}, "
+        f"jpar={metrics['jpar_good_fraction']:.6f}, "
+        f"score={metrics['score']:.6f}, objective={metrics['objective']:.6f}"
+    )
     output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),final_loss_fraction,final_effective_time,mirror_ratio,max_elongation)
-    return final_loss_fraction
+    return metrics["objective"]
     # return final_effective_time*final_loss_fraction
 optEP = make_optimizable(EPcostFunction, vmec)
 ######################################
@@ -179,11 +291,13 @@ try:
     pprint("Initial max elongation:", MaxElongationPen(vmec=vmec, return_elongation=True))
 except Exception as e: pprint(e)
 if MPI.COMM_WORLD.rank == 0:
-    B_scale = 5.7/vmec.wout.b0/redux_B  # Scale the magnetic field by a factor
-    Aminor_scale = 1.7/vmec.wout.Aminor_p/redux_Aminor  # Scale the machine size by a factor
-    g_field = Simple(wout_filename=vmec.output_file, B_scale=B_scale, Aminor_scale=Aminor_scale, multharm=multharm,ns_s=ns_s,ns_tp=ns_tp)
-    g_orbits = ParticleEnsembleOrbit_Simple(g_particle,g_field,tfinal=tfinal,nparticles=nparticles,notrace_passing=notrace_passing,nper=nper,npoiper=npoiper,npoiper2=npoiper2)
-    pprint("Initial loss fraction:", g_orbits.total_particles_lost)
+    initial_metrics = run_simple_metrics_for_vmec(
+        vmec,
+        nparticles_=nparticles,
+        tfinal_=tfinal,
+        nsamples_=nsamples,
+    )
+    pprint("Initial loss fraction:", initial_metrics["loss_fraction"])
 ######################################
 if QA_or_QH_or_QI == 'QA': qs = QuasisymmetryRatioResidual(vmec, np.arange(0, 1.01, 0.1), helicity_m=1, helicity_n=0)
 else: qs = QuasisymmetryRatioResidual(vmec, np.arange(0, 1.01, 0.1), helicity_m=1, helicity_n=-1)    
@@ -248,11 +362,13 @@ for max_mode in max_modes:
             pprint("Final mirror ratio:", MirrorRatioPen(v=vmec, output_mirror=True))
             pprint("Final max elongation:", MaxElongationPen(vmec=vmec, return_elongation=True))
             pprint("Quasisymmetry objective after optimization:", qs.total())
-            B_scale = 5.7/vmec.wout.b0/redux_B  # Scale the magnetic field by a factor
-            Aminor_scale = 1.7/vmec.wout.Aminor_p/redux_Aminor  # Scale the machine size by a factor
-            g_field = Simple(wout_filename=vmec.output_file, B_scale=B_scale, Aminor_scale=Aminor_scale,multharm=multharm,ns_s=ns_s,ns_tp=ns_tp)
-            g_orbits = ParticleEnsembleOrbit_Simple(g_particle,g_field,tfinal=tfinal,nparticles=nparticles,notrace_passing=notrace_passing,nper=nper,npoiper=npoiper,npoiper2=npoiper2)
-            pprint("Final loss fraction:", g_orbits.total_particles_lost)
+            final_metrics = run_simple_metrics_for_vmec(
+                vmec,
+                nparticles_=nparticles,
+                tfinal_=tfinal,
+                nsamples_=nsamples,
+            )
+            pprint("Final loss fraction:", final_metrics["loss_fraction"])
             pprint("Total objective after optimization:", prob.objective())
         except Exception as e: pprint(e)
     ######################################
