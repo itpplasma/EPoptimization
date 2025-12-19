@@ -131,4 +131,5 @@ dmypy.json
 # Optimization outputs
 out_*/
 out_s*/
+out_s*
 threed1.*
