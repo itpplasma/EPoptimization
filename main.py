@@ -153,6 +153,8 @@ else:
         elif QA_or_QH_or_QI == 'QH': filename = os.path.join(this_path, 'initial_configs', 'input.nfp4_QH')
         elif QA_or_QH_or_QI == 'QI': filename = os.path.join(this_path, 'initial_configs', 'input.QI')
 os.chdir(OUT_DIR)
+if MPI.COMM_WORLD.rank == 0:
+    pprint(f"VMEC input: {filename}")
 vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = os.environ.get("EP_OPT_KEEP_ALL_FILES", "1") == "1"
 surf = vmec.boundary
@@ -395,7 +397,22 @@ initial_dofs=np.copy(surf.x)
 def fun(dofss):
     # prob.x = initial_dofs
     prob.x = dofss
-    return prob.objective()
+    objective = prob.objective()
+    checkpoint_enable_eval = os.environ.get("EP_OPT_CHECKPOINT", "1") == "1"
+    checkpoint_eval_every = int(os.environ.get("EP_OPT_CHECKPOINT_EVAL_EVERY", "5"))
+    if checkpoint_enable_eval and MPI.COMM_WORLD.rank == 0:
+        if not hasattr(fun, "_best"):
+            fun._best = {"f": float("inf"), "n": 0}  # type: ignore[attr-defined]
+        fun._best["n"] += 1  # type: ignore[attr-defined]
+        if objective < fun._best["f"] and (fun._best["n"] % checkpoint_eval_every) == 0:  # type: ignore[attr-defined]
+            fun._best["f"] = float(objective)  # type: ignore[attr-defined]
+            try:
+                surf.x = np.asarray(dofss)
+                vmec.write_input(checkpoint_path)
+                pprint(f"Wrote {checkpoint_name} with objective={fun._best['f']:.6g}")  # type: ignore[attr-defined]
+            except Exception as e:
+                pprint(f"Checkpoint write failed: {e}")
+    return objective
 for max_mode in max_modes:
     output_path_parameters=f'output_{optimizer}_{QA_or_QH_or_QI}_maxmode{max_mode}.csv'
     surf.fix_all()
@@ -417,27 +434,6 @@ for max_mode in max_modes:
         no_local_search = (os.environ.get('EP_OPT_NO_LOCAL_SEARCH', '0') == '1') or fast_mode
         # bounds = [(np.max([-10*np.abs(dof),-0.21]),np.min([0.21,10*np.abs(dof)])) for dof in dofs]
         bounds = [(-0.25,0.25) for _ in dofs]
-        checkpoint_enable = os.environ.get("EP_OPT_CHECKPOINT", "1") == "1"
-        checkpoint_every = int(os.environ.get("EP_OPT_CHECKPOINT_EVERY", "1"))
-        best = {"n": 0, "f": float("inf")}
-
-        def _checkpoint_callback(x, f, context):
-            if (not checkpoint_enable) or MPI.COMM_WORLD.rank != 0:
-                return False
-            best["n"] += 1
-            if (best["n"] % checkpoint_every) != 0:
-                return False
-            if float(f) >= best["f"]:
-                return False
-            best["f"] = float(f)
-            try:
-                surf.x = np.asarray(x)
-                vmec.write_input(checkpoint_path)
-                pprint(f"Wrote {checkpoint_name} with objective={best['f']:.6g}")
-            except Exception as e:
-                pprint(f"Checkpoint write failed: {e}")
-            return False
-
         res = dual_annealing(
             fun,
             bounds=bounds,
@@ -446,7 +442,6 @@ for max_mode in max_modes:
             visit=visit,
             no_local_search=no_local_search,
             x0=dofs,
-            callback=_checkpoint_callback,
         )
     elif optimizer == 'basinhopping':
         stepsize_minimizer = 0.5
