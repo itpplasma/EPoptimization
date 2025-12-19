@@ -127,15 +127,23 @@ resume_candidates = [
     os.path.join(dest, checkpoint_name),
 ]
 if use_previous_results_if_available and any(os.path.isfile(p) for p in resume_candidates):
-    if MPI.COMM_WORLD.rank == 0:
-        os.makedirs(dest, exist_ok=True)
-        if os.path.isfile(final_path) and not os.path.isfile(os.path.join(dest, "input.final")):
-            files = os.listdir(OUT_DIR)
-            for f in files:
-                shutil.move(os.path.join(OUT_DIR, f), dest)
+    archive_previous = os.environ.get("EP_OPT_ARCHIVE_PREVIOUS", "0") == "1"
+    if archive_previous:
+        if MPI.COMM_WORLD.rank == 0:
+            os.makedirs(dest, exist_ok=True)
+            if os.path.isfile(final_path) and not os.path.isfile(os.path.join(dest, "input.final")):
+                files = os.listdir(OUT_DIR)
+                for f in files:
+                    shutil.move(os.path.join(OUT_DIR, f), dest)
+        else:
+            time.sleep(0.5)
+        filename = (
+            os.path.join(dest, "input.final")
+            if os.path.isfile(os.path.join(dest, "input.final"))
+            else os.path.join(dest, checkpoint_name)
+        )
     else:
-        time.sleep(0.5)
-    filename = os.path.join(dest, "input.final") if os.path.isfile(os.path.join(dest, "input.final")) else os.path.join(dest, checkpoint_name)
+        filename = final_path if os.path.isfile(final_path) else checkpoint_path
 else:
     input_override = os.environ.get("EP_OPT_VMEC_INPUT", "").strip()
     if input_override:
@@ -146,7 +154,7 @@ else:
         elif QA_or_QH_or_QI == 'QI': filename = os.path.join(this_path, 'initial_configs', 'input.QI')
 os.chdir(OUT_DIR)
 vmec = Vmec(filename, mpi=mpi, verbose=False)
-vmec.keep_all_files = True
+vmec.keep_all_files = os.environ.get("EP_OPT_KEEP_ALL_FILES", "1") == "1"
 surf = vmec.boundary
 ######################################
 def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio,max_elongation):
