@@ -13,6 +13,7 @@ dependencies = [
     "booz-xform",
     "netcdf4",
     "pysimple",
+    "vmec",
 ]
 
 [tool.uv]
@@ -20,3 +21,4 @@ package = false
 
 [tool.uv.sources]
 pysimple = { path = "../SIMPLE", editable = true }
+vmec = { path = "../VMEC2000", editable = true }
