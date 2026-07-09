@@ -16,11 +16,7 @@ from simsopt.util import MpiPartition
 from simsopt.solve import least_squares_mpi_solve, least_squares_serial_solve
 from simsopt.mhd import QuasisymmetryRatioResidual
 from simsopt.objectives import LeastSquaresProblem
-from neat.simple_classification import (
-    default_fast_classification_config,
-    run_simple_fast_classification,
-    run_simple_loss,
-)
+import simple_barrier
 from scipy.optimize import minimize, basinhopping, differential_evolution, dual_annealing
 from Alan_objectives import MaxElongationPen, MirrorRatioPen
 mpi = MpiPartition()
@@ -43,6 +39,9 @@ opt_Elongation = True
 plot_result = True
 optimizer = 'dual_annealing' # least_squares_diff, least_squares, basinhopping, differential_evolution, dual_annealing
 use_previous_results_if_available = os.environ.get("EP_OPT_RESUME", "0") == "1"
+objective_mode = os.environ.get("EP_OPT_OBJECTIVE", "barrier")  # barrier | neat
+if objective_mode not in ("barrier", "neat"):
+    raise ValueError(f"EP_OPT_OBJECTIVE must be 'barrier' or 'neat', got {objective_mode}")
 
 weight_optEP = 100.0
 weight_opt_Mirror = 100.0
@@ -102,6 +101,9 @@ else:
     npoiper2 = int(os.environ.get("EP_OPT_NPOIPER2", str(npoiper2)))
     notrace_passing = int(os.environ.get("EP_OPT_NOTRACE_PASSING", str(notrace_passing)))
     plot_result = os.environ.get("EP_OPT_PLOT", "1") == "1"
+    if objective_mode == 'barrier' and "EP_OPT_TFINAL" not in os.environ:
+        tfinal = 2e-2
+barrier_s_outer = float(os.environ.get("EP_OPT_BARRIER_S_OUTER", "0.6"))
 
 if QA_or_QH_or_QI == 'QA': nfp=2
 elif QA_or_QH_or_QI == 'QH': nfp=4
@@ -159,9 +161,9 @@ vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = os.environ.get("EP_OPT_KEEP_ALL_FILES", "1") == "1"
 surf = vmec.boundary
 ######################################
-def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio,max_elongation):
-    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation']])
-    values=np.concatenate([dofs,[mean_iota],[aspect],[loss_fraction],[eff_time],[mirror_ratio],[max_elongation]])
+def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio,max_elongation,barrier_overlap=np.nan):
+    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation'],['barrier_overlap']])
+    values=np.concatenate([dofs,[mean_iota],[aspect],[loss_fraction],[eff_time],[mirror_ratio],[max_elongation],[barrier_overlap]])
     dictionary = dict(zip(keys, values))
     df = pd.DataFrame(data=[dictionary])
     if not os.path.exists(output_path_parameters): pd.DataFrame(columns=df.columns).to_csv(output_path_parameters, index=False)
@@ -171,6 +173,11 @@ optElongation = make_optimizable(MaxElongationPen, vmec)
 optMirror = make_optimizable(MirrorRatioPen, vmec)
 ######################################
 def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, nsamples_: int):
+    from neat.simple_classification import (
+        default_fast_classification_config,
+        run_simple_fast_classification,
+        run_simple_loss,
+    )
     simple_executable = os.environ.get("SIMPLE_X") or os.environ.get("SIMPLE_EXE")
     if simple_executable is None:
         candidates = [
@@ -325,6 +332,43 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
     }
 
 
+def run_barrier_metrics_for_vmec(v: Vmec, *, ntestpart_: int, trace_time_: float):
+    scale_model = os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1"
+    base_facE_al = float(os.environ.get("EP_OPT_FAC_E_AL", "1.0"))
+    rz_target, b_target = simple_barrier.reactor_scale(v.output_file)
+    if scale_model:
+        # Keep the small equilibrium; match the reactor-mapping rho/a via alpha
+        # energy: rho/a ~ sqrt(E)/(B*a), and SIMPLE uses E = 3.5 MeV / facE_al.
+        rz_scale, b_scale = 1.0, 1.0
+        facE_al = base_facE_al * (b_target * rz_target) ** 2
+    else:
+        rz_scale, b_scale = rz_target, b_target
+        facE_al = base_facE_al
+    metrics = simple_barrier.barrier_metrics(
+        v.output_file,
+        s_inner=s_initial,
+        s_outer=barrier_s_outer,
+        ntestpart=ntestpart_,
+        rz_scale=rz_scale,
+        b_scale=b_scale,
+        facE_al=facE_al,
+        trace_time=trace_time_,
+        timeout_s=float(os.environ.get("EP_OPT_SIMPLE_TIMEOUT", "3600")),
+    )
+    if not np.isfinite(metrics["barrier_overlap"]):
+        raise RuntimeError("barrier_overlap is NaN: no classified trapped particles on a surface")
+    metrics["objective"] = float(metrics["barrier_overlap"])
+    metrics["loss_fraction"] = metrics["proxy_loss_inner"]
+    metrics["effective_time"] = float("nan")
+    return metrics
+
+
+def run_metrics_for_vmec(v: Vmec):
+    if objective_mode == 'barrier':
+        return run_barrier_metrics_for_vmec(v, ntestpart_=nparticles, trace_time_=tfinal)
+    return run_simple_metrics_for_vmec(v, nparticles_=nparticles, tfinal_=tfinal, nsamples_=nsamples)
+
+
 def EPcostFunction(v: Vmec):
     start_time = time.time()
     try: v.run()
@@ -332,12 +376,7 @@ def EPcostFunction(v: Vmec):
         print(e)
         return 1e3
     try:
-        metrics = run_simple_metrics_for_vmec(
-            v,
-            nparticles_=nparticles,
-            tfinal_=tfinal,
-            nsamples_=nsamples,
-        )
+        metrics = run_metrics_for_vmec(v)
     except Exception as e:
         print(f"SIMPLE metrics failed: {e}")
         return 1e3
@@ -350,19 +389,30 @@ def EPcostFunction(v: Vmec):
     # + 'dofs = {v.x}, mean_iota={v.mean_iota()} and '
     + f'mirror ratio={mirror_ratio:1f}, max elongation={max_elongation:1f} and '
     + f'aspect ratio={v.aspect():1f} took {(time.time()-start_time):1f}s')
-    print(
-        "SIMPLE proxy metrics: "
-        f"facE_al={metrics['facE_al']:.6g}, "
-        f"vmec_B_scale={metrics['vmec_B_scale']:.6g}, "
-        f"vmec_RZ_scale={metrics['vmec_RZ_scale']:.6g}, "
-        f"confined_trapped={metrics['trapped_confined_fraction']:.6f}, "
-        f"ideal={metrics['ideal_fraction']:.6f}, "
-        f"jpar={metrics['jpar_good_fraction']:.6f}, "
-        f"score={metrics['score']:.6f}, objective={metrics['objective']:.6f}"
-    )
-    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),final_loss_fraction,final_effective_time,mirror_ratio,max_elongation)
+    if objective_mode == 'barrier':
+        print(
+            "Barrier proxy metrics: "
+            f"facE_al={metrics['facE_al']:.6g}, "
+            f"vmec_B_scale={metrics['vmec_B_scale']:.6g}, "
+            f"vmec_RZ_scale={metrics['vmec_RZ_scale']:.6g}, "
+            f"chaotic_inner={metrics['chaotic_trapped_inner']:.6f}, "
+            f"chaotic_outer={metrics['chaotic_trapped_outer']:.6f}, "
+            f"barrier_overlap={metrics['barrier_overlap']:.6f}, "
+            f"objective={metrics['objective']:.6f}"
+        )
+    else:
+        print(
+            "SIMPLE proxy metrics: "
+            f"facE_al={metrics['facE_al']:.6g}, "
+            f"vmec_B_scale={metrics['vmec_B_scale']:.6g}, "
+            f"vmec_RZ_scale={metrics['vmec_RZ_scale']:.6g}, "
+            f"confined_trapped={metrics['trapped_confined_fraction']:.6f}, "
+            f"ideal={metrics['ideal_fraction']:.6f}, "
+            f"jpar={metrics['jpar_good_fraction']:.6f}, "
+            f"score={metrics['score']:.6f}, objective={metrics['objective']:.6f}"
+        )
+    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),final_loss_fraction,final_effective_time,mirror_ratio,max_elongation,metrics.get("barrier_overlap", np.nan))
     return metrics["objective"]
-    # return final_effective_time*final_loss_fraction
 optEP = make_optimizable(EPcostFunction, vmec)
 ######################################
 try:
@@ -373,12 +423,8 @@ try:
     pprint("Initial max elongation:", MaxElongationPen(vmec=vmec, return_elongation=True))
 except Exception as e: pprint(e)
 if MPI.COMM_WORLD.rank == 0:
-    initial_metrics = run_simple_metrics_for_vmec(
-        vmec,
-        nparticles_=nparticles,
-        tfinal_=tfinal,
-        nsamples_=nsamples,
-    )
+    initial_metrics = run_metrics_for_vmec(vmec)
+    pprint("Initial objective:", initial_metrics["objective"])
     pprint("Initial loss fraction:", initial_metrics["loss_fraction"])
 ######################################
 if QA_or_QH_or_QI == 'QA': qs = QuasisymmetryRatioResidual(vmec, np.arange(0, 1.01, 0.1), helicity_m=1, helicity_n=0)
