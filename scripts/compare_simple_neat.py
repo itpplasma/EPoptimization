@@ -128,7 +128,8 @@ def run_neat(wout, *, sbeg, n, trace_time, nsamples, rz, b, matched, timeout_s):
 
 def loss_stats(run, trace_time, t_prompt):
     loss = 1.0 - run["conf_pass"] - run["conf_trap"]
-    lost_mask = (run["times_lost"] > 0) & (run["times_lost"] < trace_time)
+    # SIMPLE writes times_lost = trace_time (to roundoff) for confined particles.
+    lost_mask = (run["times_lost"] > 0) & (run["times_lost"] < trace_time * (1.0 - 1e-6))
     return {
         "loss_total": float(loss[-1]),
         "loss_prompt": float(np.interp(t_prompt, run["time"], loss)),
