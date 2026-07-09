@@ -1,0 +1,22 @@
+[project]
+name = "epoptimization"
+version = "0.1.0"
+description = "Energetic particle stellarator optimization driver"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "mpi4py",
+    "simsopt",
+    "booz-xform",
+    "netcdf4",
+    "pysimple",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+pysimple = { path = "../SIMPLE", editable = true }
