@@ -42,13 +42,18 @@ use_previous_results_if_available = os.environ.get("EP_OPT_RESUME", "0") == "1"
 objective_mode = os.environ.get("EP_OPT_OBJECTIVE", "barrier")  # barrier | neat
 if objective_mode not in ("barrier", "neat"):
     raise ValueError(f"EP_OPT_OBJECTIVE must be 'barrier' or 'neat', got {objective_mode}")
+if os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1":
+    raise ValueError(
+        "EP_OPT_SCALE_MODEL is not supported: evaluate 3.5 MeV alphas on the "
+        "reactor-scaled equilibrium"
+    )
+if float(os.environ.get("EP_OPT_FAC_E_AL", "1.0")) != 1.0:
+    raise ValueError("EP_OPT_FAC_E_AL must be 1 for 3.5 MeV alpha evaluation")
 
 weight_optEP = 100.0
 weight_opt_Mirror = 100.0
 weight_opt_Elongation = 10.0
 weight_opt_well = 0.1
-redux_B = 1.5 # Use ARIES-CS magnetic field reduced by this factor
-redux_Aminor = 1.5 # Use ARIES-CS minor radius reduced by this factor
 if QA_or_QH_or_QI == 'QA': aspect_ratio_target = 6
 elif QA_or_QH_or_QI == 'QH': aspect_ratio_target = 7
 elif QA_or_QH_or_QI == 'QI': aspect_ratio_target = 8
@@ -161,9 +166,9 @@ vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = os.environ.get("EP_OPT_KEEP_ALL_FILES", "1") == "1"
 surf = vmec.boundary
 ######################################
-def output_dofs_to_csv(dofs,mean_iota,aspect,loss_fraction,eff_time,mirror_ratio,max_elongation,barrier_overlap=np.nan):
-    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation'],['barrier_overlap']])
-    values=np.concatenate([dofs,[mean_iota],[aspect],[loss_fraction],[eff_time],[mirror_ratio],[max_elongation],[barrier_overlap]])
+def output_dofs_to_csv(dofs,mean_iota,aspect,classification_loss_fraction,eff_time,mirror_ratio,max_elongation,barrier_overlap=np.nan):
+    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['classification_loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation'],['barrier_overlap']])
+    values=np.concatenate([dofs,[mean_iota],[aspect],[classification_loss_fraction],[eff_time],[mirror_ratio],[max_elongation],[barrier_overlap]])
     dictionary = dict(zip(keys, values))
     df = pd.DataFrame(data=[dictionary])
     if not os.path.exists(output_path_parameters): pd.DataFrame(columns=df.columns).to_csv(output_path_parameters, index=False)
@@ -189,40 +194,9 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
                 simple_executable = str(candidate)
                 break
 
-    # Reactor-size mapping knobs. Default behavior scales VMEC geometry/B into a target
-    # machine, keeping alpha energy fixed at 3.5 MeV.
-    #
-    # For "scale model" experiments, keep the *small* VMEC equilibrium (B, size) as-is,
-    # and instead scale down alpha energy (via SIMPLE's facE_al) to match the same
-    # dimensionless Larmor radius rho/a one would get from the reactor-size mapping.
-    #
-    # SIMPLE uses E_alpha = 3.5d6 / facE_al (eV), so increasing facE_al reduces energy.
-    scale_model = os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1"
     base_facE_al = float(os.environ.get("EP_OPT_FAC_E_AL", "1.0"))
-
-    # Some VMEC runs may not converge early in optimization; guard access to wout fields.
-    b0 = getattr(v.wout, "b0", None)
-    aminor_p = getattr(v.wout, "Aminor_p", None)
-    if b0 is None or aminor_p is None:
-        raise RuntimeError(
-            "VMEC output missing b0/Aminor_p (likely non-converged equilibrium); "
-            f"b0={b0}, Aminor_p={aminor_p}"
-        )
-
-    B_scale_target = 5.7 / float(b0) / redux_B
-    Aminor_scale_target = 1.7 / float(aminor_p) / redux_Aminor
-
-    if scale_model:
-        B_scale = 1.0
-        Aminor_scale = 1.0
-        # Match rho/a from the reactor-size mapping:
-        # rho/a ∝ sqrt(E)/(B*a), so to undo (B_scale_target, Aminor_scale_target),
-        # scale energy by 1/(B_scale_target*Aminor_scale_target)^2.
-        facE_al = base_facE_al * (B_scale_target * Aminor_scale_target) ** 2
-    else:
-        B_scale = float(B_scale_target)
-        Aminor_scale = float(Aminor_scale_target)
-        facE_al = base_facE_al
+    Aminor_scale, B_scale = simple_barrier.reactor_scale(v.output_file)
+    facE_al = base_facE_al
 
     # Generate a trapped-focused starting distribution:
     # SIMPLE's default pitch sampling can yield mostly passing particles for some equilibria.
@@ -319,7 +293,7 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
     objective = 1.0 - float(result.score)
 
     return {
-        "loss_fraction": loss_fraction,
+        "classification_loss_fraction": loss_fraction,
         "effective_time": effective_time,
         "vmec_B_scale": float(B_scale),
         "vmec_RZ_scale": float(Aminor_scale),
@@ -333,17 +307,9 @@ def run_simple_metrics_for_vmec(v: Vmec, *, nparticles_: int, tfinal_: float, ns
 
 
 def run_barrier_metrics_for_vmec(v: Vmec, *, ntestpart_: int, trace_time_: float):
-    scale_model = os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1"
     base_facE_al = float(os.environ.get("EP_OPT_FAC_E_AL", "1.0"))
-    rz_target, b_target = simple_barrier.reactor_scale(v.output_file)
-    if scale_model:
-        # Keep the small equilibrium; match the reactor-mapping rho/a via alpha
-        # energy: rho/a ~ sqrt(E)/(B*a), and SIMPLE uses E = 3.5 MeV / facE_al.
-        rz_scale, b_scale = 1.0, 1.0
-        facE_al = base_facE_al * (b_target * rz_target) ** 2
-    else:
-        rz_scale, b_scale = rz_target, b_target
-        facE_al = base_facE_al
+    rz_scale, b_scale = simple_barrier.reactor_scale(v.output_file)
+    facE_al = base_facE_al
     metrics = simple_barrier.barrier_metrics(
         v.output_file,
         s_inner=s_initial,
@@ -358,7 +324,7 @@ def run_barrier_metrics_for_vmec(v: Vmec, *, ntestpart_: int, trace_time_: float
     if not np.isfinite(metrics["barrier_overlap"]):
         raise RuntimeError("barrier_overlap is NaN: no classified trapped particles on a surface")
     metrics["objective"] = float(metrics["barrier_overlap"])
-    metrics["loss_fraction"] = metrics["proxy_loss_inner"]
+    metrics["classification_loss_fraction"] = metrics["proxy_loss_inner"]
     metrics["effective_time"] = float("nan")
     return metrics
 
@@ -380,12 +346,12 @@ def EPcostFunction(v: Vmec):
     except Exception as e:
         print(f"SIMPLE metrics failed: {e}")
         return 1e3
-    final_loss_fraction = metrics["loss_fraction"]
+    classification_loss_fraction = metrics["classification_loss_fraction"]
     final_effective_time = metrics["effective_time"]
     mirror_ratio = MirrorRatioPen(v=v, output_mirror=True)
     max_elongation = MaxElongationPen(vmec=v, return_elongation=True)
-    print(f'Loss = {(100*final_loss_fraction):1f}% with '
-    # + f'eff time = {final_effective_time:1f} (J={(final_effective_time*final_loss_fraction):1f}) and '
+    print(f'Classification loss = {(100*classification_loss_fraction):1f}% with '
+    # + f'eff time = {final_effective_time:1f} and '
     # + 'dofs = {v.x}, mean_iota={v.mean_iota()} and '
     + f'mirror ratio={mirror_ratio:1f}, max elongation={max_elongation:1f} and '
     + f'aspect ratio={v.aspect():1f} took {(time.time()-start_time):1f}s')
@@ -411,7 +377,7 @@ def EPcostFunction(v: Vmec):
             f"jpar={metrics['jpar_good_fraction']:.6f}, "
             f"score={metrics['score']:.6f}, objective={metrics['objective']:.6f}"
         )
-    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),final_loss_fraction,final_effective_time,mirror_ratio,max_elongation,metrics.get("barrier_overlap", np.nan))
+    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),classification_loss_fraction,final_effective_time,mirror_ratio,max_elongation,metrics.get("barrier_overlap", np.nan))
     return metrics["objective"]
 optEP = make_optimizable(EPcostFunction, vmec)
 ######################################
@@ -425,7 +391,7 @@ except Exception as e: pprint(e)
 if MPI.COMM_WORLD.rank == 0:
     initial_metrics = run_metrics_for_vmec(vmec)
     pprint("Initial objective:", initial_metrics["objective"])
-    pprint("Initial loss fraction:", initial_metrics["loss_fraction"])
+    pprint("Initial classification loss fraction:", initial_metrics["classification_loss_fraction"])
 ######################################
 if QA_or_QH_or_QI == 'QA': qs = QuasisymmetryRatioResidual(vmec, np.arange(0, 1.01, 0.1), helicity_m=1, helicity_n=0)
 else: qs = QuasisymmetryRatioResidual(vmec, np.arange(0, 1.01, 0.1), helicity_m=1, helicity_n=-1)    
@@ -513,13 +479,9 @@ for max_mode in max_modes:
             pprint("Final mirror ratio:", MirrorRatioPen(v=vmec, output_mirror=True))
             pprint("Final max elongation:", MaxElongationPen(vmec=vmec, return_elongation=True))
             pprint("Quasisymmetry objective after optimization:", qs.total())
-            final_metrics = run_simple_metrics_for_vmec(
-                vmec,
-                nparticles_=nparticles,
-                tfinal_=tfinal,
-                nsamples_=nsamples,
-            )
-            pprint("Final loss fraction:", final_metrics["loss_fraction"])
+            final_metrics = run_metrics_for_vmec(vmec)
+            pprint("Final objective:", final_metrics["objective"])
+            pprint("Final classification loss fraction:", final_metrics["classification_loss_fraction"])
             pprint("Total objective after optimization:", prob.objective())
         except Exception as e: pprint(e)
     ######################################

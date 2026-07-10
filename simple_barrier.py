@@ -93,13 +93,21 @@ def reactor_scale(wout_path: str | os.PathLike) -> tuple[float, float]:
     return A_TARGET / a, B_TARGET / abs(b)
 
 
-def chaotic_fraction(run: Path, col: int = 4) -> tuple[float, float, int]:
-    """Return (chaotic_trapped, chaotic_all, n_trapped) from class_parts.dat."""
+def load_classification(run: Path, col: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     cp = np.loadtxt(run / "class_parts.dat", ndmin=2)
-    topo = cp[:, col].astype(int)
-    trapped = np.isin(topo, (1, 2))
+    particles = np.loadtxt(run / "times_lost.dat", ndmin=2)
+    if cp.shape[0] != particles.shape[0]:
+        raise ValueError(f"classification particle count mismatch in {run}")
+    if not np.array_equal(cp[:, 0].astype(int), particles[:, 0].astype(int)):
+        raise ValueError(f"classification particle indices mismatch in {run}")
+    return cp[:, 2], cp[:, col].astype(int), particles[:, 2] >= 0.0
+
+
+def chaotic_fraction(run: Path, col: int = 4) -> tuple[float, float, int]:
+    """Return (chaotic_trapped, chaotic_all, n_trapped)."""
+    _, topo, trapped = load_classification(run, col)
     n_tr = int(trapped.sum())
-    chaotic_trapped = float((topo == 2).sum() / n_tr) if n_tr else float("nan")
+    chaotic_trapped = float((topo[trapped] == 2).sum() / n_tr) if n_tr else float("nan")
     return chaotic_trapped, float((topo == 2).mean()), n_tr
 
 
@@ -111,11 +119,8 @@ def barrier_overlap(inner: Path, outer: Path, nbins: int = 16, col: int = 4) -> 
     mu is class_parts column 2 (conserved along the orbit, so comparable across
     surfaces); bins are taken on the mu range common to both surfaces.
     """
-    ci = np.loadtxt(inner / "class_parts.dat", ndmin=2)
-    co = np.loadtxt(outer / "class_parts.dat", ndmin=2)
-    mu_i, topo_i = ci[:, 2], ci[:, col].astype(int)
-    mu_o, topo_o = co[:, 2], co[:, col].astype(int)
-    tr_i, tr_o = np.isin(topo_i, (1, 2)), np.isin(topo_o, (1, 2))
+    mu_i, topo_i, tr_i = load_classification(inner, col)
+    mu_o, topo_o, tr_o = load_classification(outer, col)
     if tr_i.sum() == 0 or tr_o.sum() == 0:
         return float("nan")
     lo = max(mu_i[tr_i].min(), mu_o[tr_o].min())
@@ -123,9 +128,11 @@ def barrier_overlap(inner: Path, outer: Path, nbins: int = 16, col: int = 4) -> 
     edges = np.linspace(lo, hi, nbins + 1)
     n_inner = int(tr_i.sum())
     m = 0.0
-    for a, b in zip(edges[:-1], edges[1:]):
-        ii = tr_i & (mu_i >= a) & (mu_i < b)
-        oo = tr_o & (mu_o >= a) & (mu_o < b)
+    for index, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
+        upper_i = mu_i <= b if index == nbins - 1 else mu_i < b
+        upper_o = mu_o <= b if index == nbins - 1 else mu_o < b
+        ii = tr_i & (mu_i >= a) & upper_i
+        oo = tr_o & (mu_o >= a) & upper_o
         if ii.sum() == 0 or oo.sum() == 0:
             continue
         p_birth_chaotic = (topo_i[ii] == 2).sum() / n_inner
