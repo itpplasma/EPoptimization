@@ -152,11 +152,13 @@ def generate(args: argparse.Namespace) -> None:
     from simsopt.mhd import Vmec
 
     output = args.out.resolve()
+    input_source = args.input.resolve()
+    base_wout = args.base_wout.resolve()
     output.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="reactor_proxy_vmec_") as tmp:
         work = Path(tmp)
         input_path = work / "input.calibration"
-        shutil.copyfile(args.input, input_path)
+        shutil.copyfile(input_source, input_path)
         previous = Path.cwd()
         os.chdir(work)
         try:
@@ -178,12 +180,12 @@ def generate(args: argparse.Namespace) -> None:
                 generated_wout = Path(vmec.output_file)
                 target_wout = case / "wout.nc"
                 if name == "base":
-                    difference = archive_difference(args.base_wout, generated_wout)
+                    difference = archive_difference(base_wout, generated_wout)
                     if difference > args.archive_tolerance:
                         raise RuntimeError(
                             f"base rerun differs from archive by {difference:.3e}"
                         )
-                    shutil.copyfile(args.base_wout, target_wout)
+                    shutil.copyfile(base_wout, target_wout)
                 else:
                     difference = None
                     shutil.copyfile(generated_wout, target_wout)
