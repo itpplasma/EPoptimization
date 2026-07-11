@@ -13,6 +13,7 @@ class_parts.dat columns: idx, s, perp_inv, jpar, topology, fractal with codes
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -53,6 +54,38 @@ CLASSIFY_NAMELIST = """&config
   fast_class = .True.
   swcoll = .False.
   deterministic = .True.
+  ran_seed = {seed}
+/
+"""
+
+DIRECT_NAMELIST = """&config
+  netcdffile = 'wout.nc'
+  startmode = 1
+  num_surf = 1
+  notrace_passing = 0
+  ntestpart = {n}
+  trace_time = {ttime}
+  sbeg = {sbeg}d0
+  contr_pp = -1.0d10
+  n_e = 2
+  n_d = 4
+  facE_al = 1.0d0
+  npoiper = 100
+  npoiper2 = 256
+  ns_s = 5
+  ns_tp = 5
+  multharm = 7
+  isw_field_type = 2
+  integmode = 1
+  relerr = 1d-13
+  nturns = 8
+  tcut = -1d0
+  vmec_RZ_scale = {rz}
+  vmec_B_scale = {b}
+  fast_class = .False.
+  swcoll = .False.
+  deterministic = .True.
+  ran_seed = {seed}
 /
 """
 
@@ -83,6 +116,14 @@ def find_simple_x(explicit: str | os.PathLike | None = None) -> Path:
     )
 
 
+def file_sha256(path: str | os.PathLike) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def reactor_scale(wout_path: str | os.PathLike) -> tuple[float, float]:
     """(vmec_RZ_scale, vmec_B_scale) putting this wout at the ARIES-CS point."""
     from scipy.io import netcdf_file
@@ -91,6 +132,114 @@ def reactor_scale(wout_path: str | os.PathLike) -> tuple[float, float]:
         a = float(d.variables["Aminor_p"][()])
         b = float(d.variables["volavgB"][()])
     return A_TARGET / a, B_TARGET / abs(b)
+
+
+def loss_windows(
+    lost_times: np.ndarray,
+    *,
+    prompt_time: float = 1.0e-3,
+    final_time: float = 3.0e-1,
+) -> dict[str, float | int]:
+    times = np.asarray(lost_times, dtype=float)
+    if times.ndim != 1 or times.size == 0:
+        raise ValueError("lost_times must be a nonempty one-dimensional array")
+    if not 0.0 < prompt_time < final_time:
+        raise ValueError("loss windows require 0 < prompt_time < final_time")
+    prompt = (times > 0.0) & (times <= prompt_time)
+    late = (times > prompt_time) & (times < final_time)
+    total = prompt | late
+    n = times.size
+    return {
+        "particles": int(n),
+        "prompt_count": int(prompt.sum()),
+        "late_count": int(late.sum()),
+        "total_count": int(total.sum()),
+        "prompt_loss": float(prompt.mean()),
+        "late_loss": float(late.mean()),
+        "total_loss": float(total.mean()),
+    }
+
+
+def direct_loss_metrics(
+    wout_path: str | os.PathLike,
+    *,
+    ntestpart: int,
+    expected_simple_sha256: str,
+    trace_time: float = 3.0e-1,
+    prompt_time: float = 1.0e-3,
+    sbeg: float = 0.3,
+    seed: int = 12345,
+    simple_executable: str | os.PathLike | None = None,
+    keep_workdir: bool = False,
+    timeout_s: float = 86400.0,
+) -> dict[str, float | int | str]:
+    if ntestpart <= 0:
+        raise ValueError("ntestpart must be positive")
+    if trace_time != 3.0e-1:
+        raise ValueError("direct calibration trace_time must be 0.3 s")
+    simple_x = find_simple_x(simple_executable)
+    binary_hash = file_sha256(simple_x)
+    if binary_hash != expected_simple_sha256:
+        raise ValueError(
+            f"unexpected SIMPLE executable hash {binary_hash}; "
+            f"expected {expected_simple_sha256}"
+        )
+    rz_scale, b_scale = reactor_scale(wout_path)
+    base = Path(tempfile.mkdtemp(prefix="direct_loss_"))
+    try:
+        shutil.copyfile(wout_path, base / "wout.nc")
+        (base / "simple.in").write_text(
+            DIRECT_NAMELIST.format(
+                n=int(ntestpart),
+                ttime=_fortran_d(trace_time),
+                sbeg=_fortran_d(sbeg),
+                rz=_fortran_d(rz_scale),
+                b=_fortran_d(b_scale),
+                seed=int(seed),
+            )
+        )
+        completed = subprocess.run(
+            [str(simple_x)],
+            cwd=str(base),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        (base / "simple_stdout.txt").write_text(completed.stdout)
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"SIMPLE failed with exit code {completed.returncode}, "
+                f"see {base / 'simple_stdout.txt'}"
+            )
+        particle_path = base / "times_lost.dat"
+        if not particle_path.exists():
+            raise FileNotFoundError(particle_path)
+        particles = np.loadtxt(particle_path, ndmin=2)
+        if particles.shape[0] != ntestpart or particles.shape[1] < 2:
+            raise ValueError(f"unexpected times_lost.dat shape {particles.shape}")
+        expected_ids = np.arange(1, ntestpart + 1)
+        if not np.array_equal(particles[:, 0].astype(int), expected_ids):
+            raise ValueError("times_lost.dat particle indices are not sequential")
+        metrics = loss_windows(
+            particles[:, 1], prompt_time=prompt_time, final_time=trace_time
+        )
+        metrics.update(
+            {
+                "vmec_RZ_scale": float(rz_scale),
+                "vmec_B_scale": float(b_scale),
+                "facE_al": 1.0,
+                "simple_sha256": binary_hash,
+                "wout_sha256": file_sha256(wout_path),
+                "seed": int(seed),
+                "workdir": str(base) if keep_workdir else "",
+            }
+        )
+        return metrics
+    finally:
+        if not keep_workdir:
+            shutil.rmtree(base, ignore_errors=True)
 
 
 def load_classification(run: Path, col: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -154,6 +303,7 @@ def run_classification(
     b_scale: float,
     facE_al: float = 1.0,
     trace_time: float = 2.0e-2,
+    seed: int = 12345,
     workdir: Path,
     simple_executable: str | os.PathLike | None = None,
     timeout_s: float = 3600.0,
@@ -169,6 +319,7 @@ def run_classification(
             face=_fortran_d(facE_al),
             rz=_fortran_d(rz_scale),
             b=_fortran_d(b_scale),
+            seed=int(seed),
         )
     )
     completed = subprocess.run(
@@ -201,12 +352,14 @@ def barrier_metrics(
     b_scale: float,
     facE_al: float = 1.0,
     trace_time: float = 2.0e-2,
+    seed: int = 12345,
     classifier: str = "topology",
     simple_executable: str | os.PathLike | None = None,
     keep_workdir: bool = False,
     timeout_s: float = 3600.0,
 ) -> dict:
-    col = CLASS_COL[classifier]
+    if classifier not in CLASS_COL:
+        raise ValueError(f"unknown classifier {classifier}")
     base = Path(tempfile.mkdtemp(prefix="barrier_"))
     try:
         runs = {}
@@ -219,27 +372,44 @@ def barrier_metrics(
                 b_scale=b_scale,
                 facE_al=facE_al,
                 trace_time=trace_time,
+                seed=seed,
                 workdir=base / label,
                 simple_executable=simple_executable,
                 timeout_s=timeout_s,
             )
-        overlap = barrier_overlap(runs["inner"], runs["outer"], col=col)
-        chaotic_in, _, n_trapped_in = chaotic_fraction(runs["inner"], col=col)
-        chaotic_out, _, n_trapped_out = chaotic_fraction(runs["outer"], col=col)
+        classifier_metrics = {}
+        for name, col in CLASS_COL.items():
+            overlap = barrier_overlap(runs["inner"], runs["outer"], col=col)
+            chaotic_in, _, n_trapped_in = chaotic_fraction(runs["inner"], col=col)
+            chaotic_out, _, n_trapped_out = chaotic_fraction(runs["outer"], col=col)
+            classifier_metrics.update(
+                {
+                    f"barrier_overlap_{name}": overlap,
+                    f"chaotic_trapped_inner_{name}": chaotic_in,
+                    f"chaotic_trapped_outer_{name}": chaotic_out,
+                    f"n_trapped_inner_{name}": n_trapped_in,
+                    f"n_trapped_outer_{name}": n_trapped_out,
+                }
+            )
         conf = np.loadtxt(runs["inner"] / "confined_fraction.dat", ndmin=2)
         proxy_loss = float(1.0 - conf[-1, 1] - conf[-1, 2]) if conf.size else float("nan")
-        return {
-            "barrier_overlap": overlap,
-            "chaotic_trapped_inner": chaotic_in,
-            "chaotic_trapped_outer": chaotic_out,
-            "n_trapped_inner": n_trapped_in,
-            "n_trapped_outer": n_trapped_out,
+        selected = {
+            "barrier_overlap": classifier_metrics[f"barrier_overlap_{classifier}"],
+            "chaotic_trapped_inner": classifier_metrics[
+                f"chaotic_trapped_inner_{classifier}"
+            ],
+            "chaotic_trapped_outer": classifier_metrics[
+                f"chaotic_trapped_outer_{classifier}"
+            ],
+            "n_trapped_inner": classifier_metrics[f"n_trapped_inner_{classifier}"],
+            "n_trapped_outer": classifier_metrics[f"n_trapped_outer_{classifier}"],
             "proxy_loss_inner": proxy_loss,
             "vmec_RZ_scale": float(rz_scale),
             "vmec_B_scale": float(b_scale),
             "facE_al": float(facE_al),
             "workdir": str(base) if keep_workdir else "",
         }
+        return {**classifier_metrics, **selected}
     finally:
         if not keep_workdir:
             shutil.rmtree(base, ignore_errors=True)

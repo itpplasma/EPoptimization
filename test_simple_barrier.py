@@ -10,15 +10,21 @@ from pathlib import Path
 
 import numpy as np
 
-from simple_barrier import barrier_overlap, chaotic_fraction
+from simple_barrier import barrier_overlap, chaotic_fraction, loss_windows
 
 
 def write_class_parts(
-    directory: Path, mu: list, topology: list, trap_par: list | None = None
+    directory: Path,
+    mu: list,
+    topology: list,
+    trap_par: list | None = None,
+    jpar: list | None = None,
 ) -> Path:
+    if jpar is None:
+        jpar = topology
     rows = [
-        [i + 1, 0.3, m, t, t, 0]
-        for i, (m, t) in enumerate(zip(mu, topology))
+        [i + 1, 0.3, m, j, t, 0]
+        for i, (m, j, t) in enumerate(zip(mu, jpar, topology))
     ]
     if trap_par is None:
         trap_par = [1.0] * len(rows)
@@ -33,6 +39,16 @@ def write_class_parts(
 
 
 def main():
+    windows = loss_windows(
+        np.array([-1.0, 5e-4, 1e-3, 2e-3, 0.3, 0.31]),
+        prompt_time=1e-3,
+        final_time=0.3,
+    )
+    assert windows["prompt_count"] == 2
+    assert windows["late_count"] == 1
+    assert windows["total_count"] == 3
+    assert windows["total_loss"] == windows["prompt_loss"] + windows["late_loss"]
+
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         # Inner surface: 8 trapped plus one forced-regular passing particle.
@@ -41,6 +57,7 @@ def main():
             mu=[0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9, 0.5],
             topology=[2, 1, 2, 1, 1, 2, 1, 1, 1],
             trap_par=[1, 1, 1, 1, 1, 1, 1, 1, -1],
+            jpar=[1] * 9,
         )
         # Outer (barrier) surface: 6 trapped.
         outer = write_class_parts(
@@ -57,6 +74,7 @@ def main():
         expected = (2 / 8) * (2 / 3) + (1 / 8) * (1 / 3)
         got = barrier_overlap(inner, outer, nbins=2)
         assert abs(got - expected) < 1e-12, f"barrier_overlap {got} != {expected}"
+        assert barrier_overlap(inner, outer, nbins=2, col=3) == 0.0
 
         chaotic_trapped, chaotic_all, n_trapped = chaotic_fraction(inner)
         assert n_trapped == 8

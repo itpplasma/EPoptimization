@@ -225,9 +225,9 @@ def MaxElongationPen(vmec,t=6.0,ntheta=16,nphi=8,return_elongation=False):
         # Fit an ellipse to this cross-section shape
         perim_resid = lambda a : perim - (4*a*ellipe(1 - ( A / (np.pi * a**2 ) )**2))
         if iphi == 0:
-            a1 = fsolve(perim_resid, 1)
+            a1 = float(np.asarray(fsolve(perim_resid, 1)).item())
         else:
-            a1 = fsolve(perim_resid, a1)
+            a1 = float(np.asarray(fsolve(perim_resid, a1)).item())
         a2 = A / (np.pi * a1)
         if a1 > a2:
             maj = a1
