@@ -24,22 +24,33 @@ def load_results(root: Path) -> dict[str, dict]:
     return results
 
 
-def load_times(root: Path, case: str) -> np.ndarray:
+def load_direct(root: Path, case: str) -> tuple[np.ndarray, float]:
     data = np.loadtxt(root / case / "direct" / "times_lost.dat", ndmin=2)
     if data.shape[1] < 2:
         raise ValueError(f"invalid times_lost.dat for {case}")
-    return data[:, 1]
+    curve = np.loadtxt(
+        root / case / "direct" / "confined_fraction.dat", ndmin=2
+    )
+    if curve.shape[0] == 0 or curve.shape[1] < 2:
+        raise ValueError(f"invalid confined_fraction.dat for {case}")
+    return data[:, 1], float(curve[-1, 0])
 
 
-def paired_se(first: np.ndarray, second: np.ndarray, window: str) -> float:
+def paired_se(
+    first: np.ndarray,
+    second: np.ndarray,
+    window: str,
+    first_final: float,
+    second_final: float,
+) -> float:
     if first.shape != second.shape:
         raise ValueError("common-random-number arrays have different shapes")
     if window == "prompt":
         a = (first > 0.0) & (first <= 1.0e-3)
         b = (second > 0.0) & (second <= 1.0e-3)
     elif window == "late":
-        a = (first > 1.0e-3) & (first < 3.0e-1)
-        b = (second > 1.0e-3) & (second < 3.0e-1)
+        a = (first > 1.0e-3) & (first < first_final)
+        b = (second > 1.0e-3) & (second < second_final)
     else:
         raise ValueError(window)
     difference = a.astype(float) - b.astype(float)
@@ -142,15 +153,21 @@ def main() -> None:
 
     names = ["base"] + sorted(name for name in accepted if name != "base")
     x = np.vstack([feature_row(accepted[name]) for name in names])
-    y = np.array([accepted[name]["direct"]["late_loss"] for name in names])
+    direct = {name: load_direct(args.results, name) for name in names}
+    windows = {
+        name: loss_windows(times, final_time=endpoint)
+        for name, (times, endpoint) in direct.items()
+    }
+    y = np.array([windows[name]["late_loss"] for name in names])
     model = fit_ridge(x, y, args.penalty)
     predicted = model["prediction"]
     rho = float(spearmanr(predicted, y).statistic)
     agreements, directions = cross_validate(names, x, y, args.penalty)
 
     base = accepted["base"]
-    base_times = load_times(args.results, "base")
-    base_prompt = base["direct"]["prompt_loss"]
+    base_times, base_endpoint = direct["base"]
+    base_prompt = windows["base"]["prompt_loss"]
+    base_late = windows["base"]["late_loss"]
     base_gamma = base["gamma_c"]["s03"]
     base_ripple = base["effective_ripple"]["s03"]
     gamma_limit = max(1.5 * base_gamma, base_gamma + 0.002)
@@ -158,19 +175,21 @@ def main() -> None:
     rows = []
     for name in names:
         result = accepted[name]
-        times = load_times(args.results, name)
-        windows = loss_windows(times)
-        prompt_se = paired_se(times, base_times, "prompt")
-        late_se = paired_se(times, base_times, "late")
-        prompt_change = windows["prompt_loss"] - base_prompt
+        times, endpoint = direct[name]
+        case_windows = windows[name]
+        prompt_se = paired_se(
+            times, base_times, "prompt", endpoint, base_endpoint
+        )
+        late_se = paired_se(times, base_times, "late", endpoint, base_endpoint)
+        prompt_change = case_windows["prompt_loss"] - base_prompt
         rows.append(
             {
                 "case": name,
-                "prompt_loss": windows["prompt_loss"],
-                "late_loss": windows["late_loss"],
+                "prompt_loss": case_windows["prompt_loss"],
+                "late_loss": case_windows["late_loss"],
                 "prompt_change": prompt_change,
                 "prompt_paired_se": prompt_se,
-                "late_change": windows["late_loss"] - base["direct"]["late_loss"],
+                "late_change": case_windows["late_loss"] - base_late,
                 "late_paired_se": late_se,
                 "barrier_overlap_topology": result["barrier"]["barrier_overlap_topology"],
                 "barrier_overlap_jpar": result["barrier"]["barrier_overlap_jpar"],

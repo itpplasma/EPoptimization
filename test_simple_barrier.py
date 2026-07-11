@@ -10,7 +10,13 @@ from pathlib import Path
 
 import numpy as np
 
-from simple_barrier import barrier_overlap, chaotic_fraction, loss_windows
+from simple_barrier import (
+    barrier_overlap,
+    chaotic_fraction,
+    classification_loss_metrics,
+    composite_proxy,
+    loss_windows,
+)
 
 
 def write_class_parts(
@@ -48,6 +54,20 @@ def main():
     assert windows["late_count"] == 1
     assert windows["total_count"] == 3
     assert windows["total_loss"] == windows["prompt_loss"] + windows["late_loss"]
+    rounded_endpoint = np.nextafter(0.3, 0.0)
+    windows = loss_windows(
+        np.array([2e-3, rounded_endpoint]), final_time=rounded_endpoint
+    )
+    assert windows["late_count"] == 1
+    assert windows["total_count"] == 1
+    assert composite_proxy(0.1, 0.4, short_weight=0.25) == 0.2
+    assert composite_proxy(
+        0.1,
+        0.5,
+        short_weight=0.25,
+        short_limit=0.4,
+        excess_penalty=100.0,
+    ) > 1.2
 
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
@@ -86,6 +106,22 @@ def main():
             base / "dead", mu=[0.2, 0.4], topology=[1, 1], trap_par=[-1, -1]
         )
         assert np.isnan(barrier_overlap(inner, dead, nbins=2))
+
+        loss_run = base / "loss"
+        loss_run.mkdir()
+        endpoint = np.nextafter(0.02, 0.0)
+        np.savetxt(
+            loss_run / "times_lost.dat",
+            np.array([[1, 5e-4], [2, 5e-3], [3, endpoint], [4, endpoint]]),
+        )
+        np.savetxt(
+            loss_run / "confined_fraction.dat",
+            np.array([[endpoint, 0.5, 0.0, 4]]),
+        )
+        loss = classification_loss_metrics(loss_run)
+        assert loss["prompt_count"] == 1
+        assert loss["total_count"] == 2
+        assert loss["total_loss"] == 0.5
 
     print("test_simple_barrier: all checks passed")
 

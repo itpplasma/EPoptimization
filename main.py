@@ -39,9 +39,12 @@ opt_Elongation = True
 plot_result = True
 optimizer = 'dual_annealing' # least_squares_diff, least_squares, basinhopping, differential_evolution, dual_annealing
 use_previous_results_if_available = os.environ.get("EP_OPT_RESUME", "0") == "1"
-objective_mode = os.environ.get("EP_OPT_OBJECTIVE", "barrier")  # barrier | neat
-if objective_mode not in ("barrier", "neat"):
-    raise ValueError(f"EP_OPT_OBJECTIVE must be 'barrier' or 'neat', got {objective_mode}")
+objective_mode = os.environ.get("EP_OPT_OBJECTIVE", "barrier")
+if objective_mode not in ("barrier", "barrier_early", "neat"):
+    raise ValueError(
+        "EP_OPT_OBJECTIVE must be 'barrier', 'barrier_early', or 'neat', "
+        f"got {objective_mode}"
+    )
 if os.environ.get("EP_OPT_SCALE_MODEL", "0") == "1":
     raise ValueError(
         "EP_OPT_SCALE_MODEL is not supported: evaluate 3.5 MeV alphas on the "
@@ -106,9 +109,15 @@ else:
     npoiper2 = int(os.environ.get("EP_OPT_NPOIPER2", str(npoiper2)))
     notrace_passing = int(os.environ.get("EP_OPT_NOTRACE_PASSING", str(notrace_passing)))
     plot_result = os.environ.get("EP_OPT_PLOT", "1") == "1"
-    if objective_mode == 'barrier' and "EP_OPT_TFINAL" not in os.environ:
+    if objective_mode in ('barrier', 'barrier_early') and "EP_OPT_TFINAL" not in os.environ:
         tfinal = 2e-2
 barrier_s_outer = float(os.environ.get("EP_OPT_BARRIER_S_OUTER", "0.6"))
+short_loss_weight = float(os.environ.get("EP_OPT_SHORT_LOSS_WEIGHT", "0.25"))
+short_loss_limit_text = os.environ.get("EP_OPT_SHORT_LOSS_LIMIT", "").strip()
+short_loss_limit = float(short_loss_limit_text) if short_loss_limit_text else None
+short_loss_excess_penalty = float(
+    os.environ.get("EP_OPT_SHORT_LOSS_EXCESS_PENALTY", "100.0")
+)
 
 if QA_or_QH_or_QI == 'QA': nfp=2
 elif QA_or_QH_or_QI == 'QH': nfp=4
@@ -166,9 +175,9 @@ vmec = Vmec(filename, mpi=mpi, verbose=False)
 vmec.keep_all_files = os.environ.get("EP_OPT_KEEP_ALL_FILES", "1") == "1"
 surf = vmec.boundary
 ######################################
-def output_dofs_to_csv(dofs,mean_iota,aspect,classification_loss_fraction,eff_time,mirror_ratio,max_elongation,barrier_overlap=np.nan):
-    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['classification_loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation'],['barrier_overlap']])
-    values=np.concatenate([dofs,[mean_iota],[aspect],[classification_loss_fraction],[eff_time],[mirror_ratio],[max_elongation],[barrier_overlap]])
+def output_dofs_to_csv(dofs,mean_iota,aspect,classification_loss_fraction,eff_time,mirror_ratio,max_elongation,barrier_overlap=np.nan,prompt_loss=np.nan,ep_objective=np.nan):
+    keys=np.concatenate([[f'x({i})' for i, dof in enumerate(dofs)],['mean_iota'],['aspect'],['classification_loss_fraction'],['eff_time'],['mirror_ratio'],['max_elongation'],['barrier_overlap'],['prompt_loss'],['ep_objective']])
+    values=np.concatenate([dofs,[mean_iota],[aspect],[classification_loss_fraction],[eff_time],[mirror_ratio],[max_elongation],[barrier_overlap],[prompt_loss],[ep_objective]])
     dictionary = dict(zip(keys, values))
     df = pd.DataFrame(data=[dictionary])
     if not os.path.exists(output_path_parameters): pd.DataFrame(columns=df.columns).to_csv(output_path_parameters, index=False)
@@ -323,14 +332,23 @@ def run_barrier_metrics_for_vmec(v: Vmec, *, ntestpart_: int, trace_time_: float
     )
     if not np.isfinite(metrics["barrier_overlap"]):
         raise RuntimeError("barrier_overlap is NaN: no classified trapped particles on a surface")
-    metrics["objective"] = float(metrics["barrier_overlap"])
+    if objective_mode == "barrier_early":
+        metrics["objective"] = simple_barrier.composite_proxy(
+            metrics["barrier_overlap"],
+            metrics["short_loss_inner"],
+            short_weight=short_loss_weight,
+            short_limit=short_loss_limit,
+            excess_penalty=short_loss_excess_penalty,
+        )
+    else:
+        metrics["objective"] = float(metrics["barrier_overlap"])
     metrics["classification_loss_fraction"] = metrics["proxy_loss_inner"]
     metrics["effective_time"] = float("nan")
     return metrics
 
 
 def run_metrics_for_vmec(v: Vmec):
-    if objective_mode == 'barrier':
+    if objective_mode in ('barrier', 'barrier_early'):
         return run_barrier_metrics_for_vmec(v, ntestpart_=nparticles, trace_time_=tfinal)
     return run_simple_metrics_for_vmec(v, nparticles_=nparticles, tfinal_=tfinal, nsamples_=nsamples)
 
@@ -355,7 +373,7 @@ def EPcostFunction(v: Vmec):
     # + 'dofs = {v.x}, mean_iota={v.mean_iota()} and '
     + f'mirror ratio={mirror_ratio:1f}, max elongation={max_elongation:1f} and '
     + f'aspect ratio={v.aspect():1f} took {(time.time()-start_time):1f}s')
-    if objective_mode == 'barrier':
+    if objective_mode in ('barrier', 'barrier_early'):
         print(
             "Barrier proxy metrics: "
             f"facE_al={metrics['facE_al']:.6g}, "
@@ -364,6 +382,8 @@ def EPcostFunction(v: Vmec):
             f"chaotic_inner={metrics['chaotic_trapped_inner']:.6f}, "
             f"chaotic_outer={metrics['chaotic_trapped_outer']:.6f}, "
             f"barrier_overlap={metrics['barrier_overlap']:.6f}, "
+            f"prompt_loss={metrics['prompt_loss_inner']:.6f}, "
+            f"short_loss={metrics['short_loss_inner']:.6f}, "
             f"objective={metrics['objective']:.6f}"
         )
     else:
@@ -377,7 +397,7 @@ def EPcostFunction(v: Vmec):
             f"jpar={metrics['jpar_good_fraction']:.6f}, "
             f"score={metrics['score']:.6f}, objective={metrics['objective']:.6f}"
         )
-    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),classification_loss_fraction,final_effective_time,mirror_ratio,max_elongation,metrics.get("barrier_overlap", np.nan))
+    output_dofs_to_csv(v.x,v.mean_iota(),v.aspect(),classification_loss_fraction,final_effective_time,mirror_ratio,max_elongation,metrics.get("barrier_overlap", np.nan),metrics.get("prompt_loss_inner", np.nan),metrics["objective"])
     return metrics["objective"]
 optEP = make_optimizable(EPcostFunction, vmec)
 ######################################

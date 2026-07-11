@@ -40,7 +40,7 @@ def main() -> None:
 
     first = np.array([1e-3, 2e-3, 3e-1, -1.0])
     second = np.array([1e-3, -1.0, 3e-1, -1.0])
-    assert paired_se(first, second, "late") > 0.0
+    assert paired_se(first, second, "late", 3e-1, 3e-1) > 0.0
     print("test_analyze_reactor_calibration: all checks passed")
 
 

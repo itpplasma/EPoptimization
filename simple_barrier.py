@@ -1,11 +1,13 @@
 """Barrier-overlap confinement proxy from SIMPLE fast classification.
 
 Ported from itpplasma/sensopt (benchmarks/cluster/cluster_eval.py, analyze.py).
-Two trapped-only fast-classification runs (birth surface, barrier surface)
-yield the mu-resolved barrier-breach fraction: the fraction of birth-chaotic
-trapped particles whose magnetic moment lands in a mu region that is also
-chaotic at the barrier surface. Lower is better; sensopt found this tracks
-traced late loss far better than any single-surface chaotic fraction.
+Fast-classification runs at the birth and barrier surfaces yield the
+mu-resolved barrier-breach fraction: the fraction of birth-chaotic trapped
+particles whose magnetic moment lands in a mu region that is also chaotic at
+the barrier surface. The birth-surface run traces all particles so its loss
+curve also supplies an unbiased short-time alpha-loss metric. The barrier
+surface run skips passing particles because only trapped classifications enter
+the overlap.
 
 class_parts.dat columns: idx, s, perp_inv, jpar, topology, fractal with codes
 0=prompt-loss, 1=regular/ideal, 2=chaotic/non-ideal.
@@ -29,7 +31,7 @@ B_TARGET = 5.865
 
 CLASSIFY_NAMELIST = """&config
   netcdffile = 'wout.nc'
-  notrace_passing = 1
+  notrace_passing = {notrace_passing}
   ntestpart = {n}
   trace_time = {ttime}
   sbeg = {sbeg}d0
@@ -138,7 +140,7 @@ def loss_windows(
     lost_times: np.ndarray,
     *,
     prompt_time: float = 1.0e-3,
-    final_time: float = 3.0e-1,
+    final_time: float,
 ) -> dict[str, float | int]:
     times = np.asarray(lost_times, dtype=float)
     if times.ndim != 1 or times.size == 0:
@@ -217,15 +219,29 @@ def direct_loss_metrics(
         particle_path = base / "times_lost.dat"
         if not particle_path.exists():
             raise FileNotFoundError(particle_path)
+        curve_path = base / "confined_fraction.dat"
+        if not curve_path.exists():
+            raise FileNotFoundError(curve_path)
         particles = np.loadtxt(particle_path, ndmin=2)
+        curve = np.loadtxt(curve_path, ndmin=2)
         if particles.shape[0] != ntestpart or particles.shape[1] < 2:
             raise ValueError(f"unexpected times_lost.dat shape {particles.shape}")
+        if curve.shape[0] == 0 or curve.shape[1] < 2:
+            raise ValueError(f"unexpected confined_fraction.dat shape {curve.shape}")
         expected_ids = np.arange(1, ntestpart + 1)
         if not np.array_equal(particles[:, 0].astype(int), expected_ids):
             raise ValueError("times_lost.dat particle indices are not sequential")
+        trace_endpoint = float(curve[-1, 0])
+        if not np.isclose(trace_endpoint, trace_time, rtol=0.0, atol=1.0e-12):
+            raise ValueError(
+                f"SIMPLE trace endpoint {trace_endpoint} differs from {trace_time}"
+            )
         metrics = loss_windows(
-            particles[:, 1], prompt_time=prompt_time, final_time=trace_time
+            particles[:, 1], prompt_time=prompt_time, final_time=trace_endpoint
         )
+        curve_loss_count = int(round((1.0 - float(curve[-1, 1])) * ntestpart))
+        if metrics["total_count"] != curve_loss_count:
+            raise ValueError("particle loss count disagrees with confinement curve")
         metrics.update(
             {
                 "vmec_RZ_scale": float(rz_scale),
@@ -234,6 +250,7 @@ def direct_loss_metrics(
                 "simple_sha256": binary_hash,
                 "wout_sha256": file_sha256(wout_path),
                 "seed": int(seed),
+                "trace_endpoint": trace_endpoint,
                 "workdir": str(base) if keep_workdir else "",
             }
         )
@@ -259,6 +276,48 @@ def chaotic_fraction(run: Path, col: int = 4) -> tuple[float, float, int]:
     n_tr = int(trapped.sum())
     chaotic_trapped = float((topo[trapped] == 2).sum() / n_tr) if n_tr else float("nan")
     return chaotic_trapped, float((topo == 2).mean()), n_tr
+
+
+def classification_loss_metrics(
+    run: Path, *, prompt_time: float = 1.0e-3
+) -> dict[str, float | int]:
+    particles = np.loadtxt(run / "times_lost.dat", ndmin=2)
+    curve = np.loadtxt(run / "confined_fraction.dat", ndmin=2)
+    if particles.shape[1] < 2 or curve.shape[0] == 0 or curve.shape[1] < 3:
+        raise ValueError(f"invalid classification loss output in {run}")
+    endpoint = float(curve[-1, 0])
+    metrics = loss_windows(
+        particles[:, 1], prompt_time=prompt_time, final_time=endpoint
+    )
+    curve_loss_count = int(
+        round((1.0 - float(curve[-1, 1]) - float(curve[-1, 2])) * len(particles))
+    )
+    if metrics["total_count"] != curve_loss_count:
+        raise ValueError("classification loss count disagrees with curve")
+    return {**metrics, "trace_endpoint": endpoint}
+
+
+def composite_proxy(
+    barrier: float,
+    short_loss: float,
+    *,
+    short_weight: float,
+    short_limit: float | None = None,
+    excess_penalty: float = 100.0,
+) -> float:
+    values = np.asarray([barrier, short_loss, short_weight, excess_penalty])
+    if not np.all(np.isfinite(values)):
+        raise ValueError("composite proxy inputs must be finite")
+    if barrier < 0.0 or not 0.0 <= short_loss <= 1.0:
+        raise ValueError("composite proxy metrics are outside their ranges")
+    if short_weight < 0.0 or excess_penalty < 0.0:
+        raise ValueError("composite proxy weights must be nonnegative")
+    objective = barrier + short_weight * short_loss
+    if short_limit is not None:
+        if not np.isfinite(short_limit) or not 0.0 <= short_limit <= 1.0:
+            raise ValueError("short loss limit must be in [0,1]")
+        objective += excess_penalty * max(0.0, short_loss - short_limit) ** 2
+    return float(objective)
 
 
 def barrier_overlap(inner: Path, outer: Path, nbins: int = 16, col: int = 4) -> float:
@@ -305,6 +364,7 @@ def run_classification(
     facE_al: float = 1.0,
     trace_time: float = 2.0e-2,
     seed: int = 12345,
+    notrace_passing: bool = True,
     workdir: Path,
     simple_executable: str | os.PathLike | None = None,
     timeout_s: float = 3600.0,
@@ -315,6 +375,7 @@ def run_classification(
     (workdir / "simple.in").write_text(
         CLASSIFY_NAMELIST.format(
             n=int(ntestpart),
+            notrace_passing=int(notrace_passing),
             ttime=_fortran_d(trace_time),
             sbeg=sbeg,
             face=_fortran_d(facE_al),
@@ -374,6 +435,7 @@ def barrier_metrics(
                 facE_al=facE_al,
                 trace_time=trace_time,
                 seed=seed,
+                notrace_passing=label == "outer",
                 workdir=base / label,
                 simple_executable=simple_executable,
                 timeout_s=timeout_s,
@@ -392,8 +454,7 @@ def barrier_metrics(
                     f"n_trapped_outer_{name}": n_trapped_out,
                 }
             )
-        conf = np.loadtxt(runs["inner"] / "confined_fraction.dat", ndmin=2)
-        proxy_loss = float(1.0 - conf[-1, 1] - conf[-1, 2]) if conf.size else float("nan")
+        short_loss = classification_loss_metrics(runs["inner"])
         selected = {
             "barrier_overlap": classifier_metrics[f"barrier_overlap_{classifier}"],
             "chaotic_trapped_inner": classifier_metrics[
@@ -404,7 +465,11 @@ def barrier_metrics(
             ],
             "n_trapped_inner": classifier_metrics[f"n_trapped_inner_{classifier}"],
             "n_trapped_outer": classifier_metrics[f"n_trapped_outer_{classifier}"],
-            "proxy_loss_inner": proxy_loss,
+            "prompt_loss_inner": short_loss["prompt_loss"],
+            "short_loss_inner": short_loss["total_loss"],
+            "short_loss_count_inner": short_loss["total_count"],
+            "classification_trace_endpoint": short_loss["trace_endpoint"],
+            "proxy_loss_inner": short_loss["total_loss"],
             "vmec_RZ_scale": float(rz_scale),
             "vmec_B_scale": float(b_scale),
             "facE_al": float(facE_al),
