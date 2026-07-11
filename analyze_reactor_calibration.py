@@ -205,7 +205,9 @@ def main() -> None:
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=False)
     with (output / "calibration.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(
+            handle, fieldnames=list(rows[0]), lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(rows)
     proxy_accepted = rho >= 0.5 and agreements >= 3
