@@ -198,16 +198,17 @@ def direct_loss_metrics(
                 seed=int(seed),
             )
         )
-        completed = subprocess.run(
-            [str(simple_x)],
-            cwd=str(base),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-        (base / "simple_stdout.txt").write_text(completed.stdout)
+        log_path = base / "simple_stdout.txt"
+        with log_path.open("w") as log:
+            completed = subprocess.run(
+                [str(simple_x)],
+                cwd=str(base),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout_s,
+                check=False,
+            )
         if completed.returncode != 0:
             raise RuntimeError(
                 f"SIMPLE failed with exit code {completed.returncode}, "
