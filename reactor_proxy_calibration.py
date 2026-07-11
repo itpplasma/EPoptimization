@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -43,6 +44,15 @@ def require_finite(values, label: str) -> np.ndarray:
     if not np.all(np.isfinite(array)):
         raise ValueError(f"non-finite {label}")
     return array
+
+
+def directory_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    for source in sorted(path.rglob("*.py")):
+        digest.update(str(source.relative_to(path)).encode())
+        digest.update(b"\0")
+        digest.update(source.read_bytes())
+    return digest.hexdigest()
 
 
 def free_boundary(vmec, max_mode: int) -> tuple[np.ndarray, list[str]]:
@@ -240,18 +250,26 @@ def desc_worker(args: argparse.Namespace) -> None:
     values = np.asarray(objective.compute(equilibrium.params_dict), dtype=float)
     if values.shape != (2,) or not np.all(np.isfinite(values)):
         raise ValueError(f"unexpected {args.metric} output {values}")
-    source = Path(desc.__file__).resolve().parents[1]
-    commit = subprocess.run(
-        ["git", "-C", str(source), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    provenance = desc_provenance()
     print(
         json.dumps(
-            {"values": values.tolist(), "version": desc.__version__, "commit": commit}
+            {"values": values.tolist(), **provenance}
         )
     )
+
+
+def desc_provenance() -> dict[str, str]:
+    import desc
+
+    package = Path(desc.__file__).resolve().parent
+    return {
+        "version": desc.__version__,
+        "source_sha256": directory_sha256(package),
+    }
+
+
+def print_desc_provenance(args: argparse.Namespace) -> None:
+    print(json.dumps(desc_provenance(), sort_keys=True))
 
 
 def desc_metric(metric: str, wout: Path, python: Path) -> dict:
@@ -331,8 +349,14 @@ def evaluate(args: argparse.Namespace) -> None:
     shutil.move(str(direct_workdir), output / "direct")
     gamma_c = desc_metric("gamma_c", wout, args.desc_python)
     effective_ripple = desc_metric("effective_ripple", wout, args.desc_python)
-    if gamma_c["commit"] != effective_ripple["commit"]:
+    if gamma_c["source_sha256"] != effective_ripple["source_sha256"]:
         raise RuntimeError("DESC source changed during candidate evaluation")
+    if gamma_c["version"] != args.desc_version:
+        raise ValueError(
+            f"unexpected DESC version {gamma_c['version']}; expected {args.desc_version}"
+        )
+    if gamma_c["source_sha256"] != args.desc_source_sha256:
+        raise ValueError("unexpected DESC source hash")
     for name, values in (
         ("gamma_c", gamma_c["values"]),
         ("effective_ripple", effective_ripple["values"]),
@@ -375,59 +399,10 @@ def evaluate(args: argparse.Namespace) -> None:
         ),
         "desc_settings": DESC_SETTINGS,
         "desc_version": gamma_c["version"],
-        "desc_commit": gamma_c["commit"],
+        "desc_source_sha256": gamma_c["source_sha256"],
         "desc_python": str(args.desc_python),
     }
     write_json(output / "result.json", result)
-
-
-def prepare_slurm(args: argparse.Namespace) -> None:
-    if args.max_concurrent < 1:
-        raise ValueError("max_concurrent must be positive")
-    if args.class_particles < 1 or args.direct_particles < 1:
-        raise ValueError("particle counts must be positive")
-    candidate_root = args.candidates.resolve()
-    cases = sorted(path.name for path in candidate_root.iterdir() if path.is_dir())
-    if not cases:
-        raise ValueError(f"no candidate directories in {candidate_root}")
-    output = args.out.resolve()
-    output.mkdir(parents=True, exist_ok=False)
-    (output / "logs").mkdir()
-    remote = Path(args.remote_root)
-    rows = [
-        "\t".join(
-            (
-                name,
-                str(remote / "candidates" / name),
-                str(remote / "results" / name),
-            )
-        )
-        for name in cases
-    ]
-    (output / "manifest.tsv").write_text("\n".join(rows) + "\n")
-    sbatch = f"""#!/bin/bash
-#SBATCH --job-name=alpha-calibrate
-#SBATCH --partition=compute
-#SBATCH --nodes=1
-#SBATCH --cpus-per-task=56
-#SBATCH --time={args.walltime}
-#SBATCH --array=1-{len(rows)}%{args.max_concurrent}
-#SBATCH --chdir={remote}
-#SBATCH --output={remote}/logs/%A_%a.out
-set -euo pipefail
-export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK}}
-line=$(sed -n "${{SLURM_ARRAY_TASK_ID}}p" {remote}/manifest.tsv)
-IFS=$'\t' read -r name candidate result <<< "$line"
-{args.python} {remote}/code/reactor_proxy_calibration.py evaluate \\
-  --candidate "$candidate" \\
-  --out "$result" \\
-  --simple-executable {args.simple_executable} \\
-  --simple-sha256 {args.simple_sha256} \\
-  --desc-python {args.python} \\
-  --class-particles {args.class_particles} \\
-  --direct-particles {args.direct_particles}
-"""
-    (output / "run_calibration.sbatch").write_text(sbatch)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -450,6 +425,8 @@ def parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--simple-executable", type=Path, required=True)
     evaluate_parser.add_argument("--simple-sha256", required=True)
     evaluate_parser.add_argument("--desc-python", type=Path, required=True)
+    evaluate_parser.add_argument("--desc-version", required=True)
+    evaluate_parser.add_argument("--desc-source-sha256", required=True)
     evaluate_parser.add_argument("--class-particles", type=int, default=1000)
     evaluate_parser.add_argument("--direct-particles", type=int, default=512)
     evaluate_parser.add_argument("--timeout", type=float, default=86400.0)
@@ -467,18 +444,9 @@ def parser() -> argparse.ArgumentParser:
     worker_parser.add_argument("--wout", type=Path, required=True)
     worker_parser.set_defaults(function=desc_worker)
 
-    slurm_parser = commands.add_parser("prepare-slurm")
-    slurm_parser.add_argument("--candidates", type=Path, required=True)
-    slurm_parser.add_argument("--out", type=Path, required=True)
-    slurm_parser.add_argument("--remote-root", required=True)
-    slurm_parser.add_argument("--python", default="/home/ert/desc-env/bin/python")
-    slurm_parser.add_argument("--simple-executable", required=True)
-    slurm_parser.add_argument("--simple-sha256", required=True)
-    slurm_parser.add_argument("--class-particles", type=int, default=1000)
-    slurm_parser.add_argument("--direct-particles", type=int, default=512)
-    slurm_parser.add_argument("--max-concurrent", type=int, default=1)
-    slurm_parser.add_argument("--walltime", default="12:00:00")
-    slurm_parser.set_defaults(function=prepare_slurm)
+    provenance_parser = commands.add_parser("desc-provenance")
+    provenance_parser.set_defaults(function=print_desc_provenance)
+
     return root
 
 
