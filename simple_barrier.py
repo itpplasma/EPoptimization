@@ -226,7 +226,7 @@ def direct_loss_metrics(
         curve = np.loadtxt(curve_path, ndmin=2)
         if particles.shape[0] != ntestpart or particles.shape[1] < 2:
             raise ValueError(f"unexpected times_lost.dat shape {particles.shape}")
-        if curve.shape[0] == 0 or curve.shape[1] < 2:
+        if curve.shape[0] == 0 or curve.shape[1] < 3:
             raise ValueError(f"unexpected confined_fraction.dat shape {curve.shape}")
         expected_ids = np.arange(1, ntestpart + 1)
         if not np.array_equal(particles[:, 0].astype(int), expected_ids):
@@ -239,7 +239,12 @@ def direct_loss_metrics(
         metrics = loss_windows(
             particles[:, 1], prompt_time=prompt_time, final_time=trace_endpoint
         )
-        curve_loss_count = int(round((1.0 - float(curve[-1, 1])) * ntestpart))
+        curve_loss_count = int(
+            round(
+                (1.0 - float(curve[-1, 1]) - float(curve[-1, 2]))
+                * ntestpart
+            )
+        )
         if metrics["total_count"] != curve_loss_count:
             raise ValueError("particle loss count disagrees with confinement curve")
         metrics.update(
