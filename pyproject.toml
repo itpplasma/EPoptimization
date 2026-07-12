@@ -14,6 +14,7 @@ dependencies = [
     "netcdf4",
     "pysimple",
     "vmec",
+    "neatstel",
 ]
 
 [tool.uv]
@@ -22,3 +23,4 @@ package = false
 [tool.uv.sources]
 pysimple = { path = "../SIMPLE", editable = true }
 vmec = { path = "../VMEC2000", editable = true }
+neatstel = { path = "../NEAT", editable = true }
