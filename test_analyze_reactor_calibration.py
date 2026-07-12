@@ -24,10 +24,10 @@ def main() -> None:
     agreements, count = cross_validate(names, x, y, penalty=0.01)
     assert (agreements, count) == (4, 4)
 
-    results = {"base": {"candidate_metadata": {"perturbation": [0.0, 0.0]}}}
+    results = {"base": {"candidate_metadata": {"perturbation": [0.0, 0.0, 0.0, 0.0]}}}
     for index in range(4):
-        vector = np.zeros(2)
-        vector[index % 2] = 0.005
+        vector = np.zeros(4)
+        vector[index] = 0.005
         for sign, factor in (("minus", -1.0), ("plus", 1.0)):
             results[f"d{index:02d}_{sign}"] = {
                 "candidate_metadata": {
@@ -37,6 +37,22 @@ def main() -> None:
             }
     step = proposal(names, results, model["prediction"])
     np.testing.assert_allclose(np.linalg.norm(step), 0.005)
+
+    nonorthogonal = np.array(
+        [[1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]]
+    )
+    nonorthogonal /= np.linalg.norm(nonorthogonal, axis=1)[:, None]
+    gradient = np.array([0.4, -0.2, 0.1, 0.3])
+    predictions = np.zeros(len(names))
+    for index, direction in enumerate(nonorthogonal):
+        for sign, factor in (("minus", -1.0), ("plus", 1.0)):
+            name = f"d{index:02d}_{sign}"
+            results[name]["candidate_metadata"]["perturbation"] = (
+                factor * 0.005 * direction
+            ).tolist()
+            predictions[names.index(name)] = factor * 0.005 * direction @ gradient
+    step = proposal(names, results, predictions)
+    np.testing.assert_allclose(step, -0.005 * gradient / np.linalg.norm(gradient))
 
     first = np.array([1e-3, 2e-3, 3e-1, -1.0])
     second = np.array([1e-3, -1.0, 3e-1, -1.0])

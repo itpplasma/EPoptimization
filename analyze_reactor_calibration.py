@@ -13,7 +13,7 @@ from reactor_proxy_calibration import write_json
 from simple_barrier import loss_windows
 
 
-FEATURES = ("barrier_overlap_topology", "barrier_overlap_jpar")
+FEATURES = ("barrier_overlap_topology",)
 
 
 def load_results(root: Path) -> dict[str, dict]:
@@ -115,7 +115,8 @@ def proposal(
     names: list[str], results: dict[str, dict], predicted: np.ndarray
 ) -> np.ndarray:
     index = {name: position for position, name in enumerate(names)}
-    gradient = None
+    directions = []
+    derivatives = []
     minor_radius = None
     for minus, plus in direction_pairs(names):
         vector = np.asarray(
@@ -123,11 +124,18 @@ def proposal(
         )
         norm = np.linalg.norm(vector)
         derivative = (predicted[index[plus]] - predicted[index[minus]]) / (2.0 * norm)
-        contribution = derivative * vector / norm
-        gradient = contribution if gradient is None else gradient + contribution
+        directions.append(vector / norm)
+        derivatives.append(derivative)
         amplitude = results[plus]["candidate_metadata"]["amplitude_over_a"]
         minor_radius = norm / amplitude
-    if gradient is None or minor_radius is None or np.linalg.norm(gradient) == 0.0:
+    if not directions or minor_radius is None:
+        raise ValueError("calibration produced no proxy gradient")
+    matrix = np.vstack(directions)
+    gram = matrix @ matrix.T
+    if np.linalg.matrix_rank(gram) != len(directions):
+        raise ValueError("calibration directions are linearly dependent")
+    gradient = matrix.T @ np.linalg.solve(gram, np.asarray(derivatives))
+    if np.linalg.norm(gradient) == 0.0:
         raise ValueError("calibration produced no proxy gradient")
     return -0.005 * minor_radius * gradient / np.linalg.norm(gradient)
 

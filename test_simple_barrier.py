@@ -10,12 +10,14 @@ from pathlib import Path
 
 import numpy as np
 
+from evaluate_barrier_proxy import parser as barrier_parser
 from simple_barrier import (
     barrier_overlap,
     chaotic_fraction,
     classification_loss_metrics,
     composite_proxy,
     loss_windows,
+    paired_barrier_bootstrap,
 )
 
 
@@ -45,6 +47,23 @@ def write_class_parts(
 
 
 def main():
+    args = barrier_parser().parse_args(
+        [
+            "--wout",
+            "/tmp/wout.nc",
+            "--out",
+            "/tmp/output",
+            "--simple-executable",
+            "/tmp/simple.x",
+            "--simple-sha256",
+            "0" * 64,
+            "--wout-sha256",
+            "1" * 64,
+        ]
+    )
+    assert args.particles == 3000
+    assert args.seed == 12345
+    assert (args.inner_surface, args.outer_surface, args.bins) == (0.3, 0.6, 16)
     windows = loss_windows(
         np.array([-1.0, 5e-4, 1e-3, 2e-3, 0.3, 0.31]),
         prompt_time=1e-3,
@@ -106,6 +125,31 @@ def main():
             base / "dead", mu=[0.2, 0.4], topology=[1, 1], trap_par=[-1, -1]
         )
         assert np.isnan(barrier_overlap(inner, dead, nbins=2))
+
+        candidate_inner = write_class_parts(
+            base / "candidate_inner",
+            mu=[0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9, 0.5],
+            topology=[1, 1, 1, 1, 1, 2, 1, 1, 1],
+            trap_par=[1, 1, 1, 1, 1, 1, 1, 1, -1],
+            jpar=[1] * 9,
+        )
+        candidate_outer = write_class_parts(
+            base / "candidate_outer",
+            mu=[0.1, 0.3, 0.45, 0.55, 0.7, 0.9],
+            topology=[2, 1, 2, 1, 2, 1],
+        )
+        comparison = paired_barrier_bootstrap(
+            inner,
+            outer,
+            candidate_inner,
+            candidate_outer,
+            nbins=2,
+            replicates=50,
+            seed=7,
+        )
+        assert comparison["candidate"] < comparison["reference"]
+        assert comparison["change"] < 0.0
+        assert comparison["paired_standard_error"] > 0.0
 
         loss_run = base / "loss"
         loss_run.mkdir()

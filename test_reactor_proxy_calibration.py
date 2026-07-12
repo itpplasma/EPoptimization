@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from reactor_proxy_calibration import candidate_specs, geometry_constraints, write_json
+from reactor_proxy_calibration import candidate_specs, geometry_constraints, parser, write_json
 
 
 def main() -> None:
@@ -51,6 +51,32 @@ def main() -> None:
             pass
         else:
             raise AssertionError("strict JSON accepted NaN")
+    args = parser().parse_args(
+        [
+            "evaluate",
+            "--candidate",
+            "/tmp/candidate",
+            "--out",
+            "/tmp/result",
+            "--simple-executable",
+            "/tmp/simple.x",
+            "--simple-sha256",
+            "0" * 64,
+            "--desc-python",
+            "/tmp/python",
+            "--desc-version",
+            "test",
+            "--desc-source-sha256",
+            "1" * 64,
+            "--direct-trace-time",
+            "0.02",
+            "--seed",
+            "22345",
+        ]
+    )
+    assert args.class_particles == 3000
+    assert args.direct_trace_time == 0.02
+    assert args.seed == 22345
     print("test_reactor_proxy_calibration: all checks passed")
 
 

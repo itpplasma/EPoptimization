@@ -177,8 +177,8 @@ def direct_loss_metrics(
 ) -> dict[str, float | int | str]:
     if ntestpart <= 0:
         raise ValueError("ntestpart must be positive")
-    if trace_time != 3.0e-1:
-        raise ValueError("direct calibration trace_time must be 0.3 s")
+    if trace_time <= prompt_time:
+        raise ValueError("direct trace_time must exceed prompt_time")
     simple_x = find_simple_x(simple_executable)
     binary_hash = file_sha256(simple_x)
     if binary_hash != expected_simple_sha256:
@@ -335,6 +335,20 @@ def barrier_overlap(inner: Path, outer: Path, nbins: int = 16, col: int = 4) -> 
     """
     mu_i, topo_i, tr_i = load_classification(inner, col)
     mu_o, topo_o, tr_o = load_classification(outer, col)
+    return barrier_overlap_samples(mu_i, topo_i, tr_i, mu_o, topo_o, tr_o, nbins)
+
+
+def barrier_overlap_samples(
+    mu_i: np.ndarray,
+    topo_i: np.ndarray,
+    tr_i: np.ndarray,
+    mu_o: np.ndarray,
+    topo_o: np.ndarray,
+    tr_o: np.ndarray,
+    nbins: int = 16,
+) -> float:
+    if nbins <= 0:
+        raise ValueError("nbins must be positive")
     if tr_i.sum() == 0 or tr_o.sum() == 0:
         return float("nan")
     lo = max(mu_i[tr_i].min(), mu_o[tr_o].min())
@@ -353,6 +367,77 @@ def barrier_overlap(inner: Path, outer: Path, nbins: int = 16, col: int = 4) -> 
         f_barrier_breach = (topo_o[oo] == 2).sum() / oo.sum()
         m += p_birth_chaotic * f_barrier_breach
     return float(m)
+
+
+def paired_barrier_bootstrap(
+    reference_inner: Path,
+    reference_outer: Path,
+    candidate_inner: Path,
+    candidate_outer: Path,
+    *,
+    nbins: int = 16,
+    col: int = 4,
+    replicates: int = 1000,
+    seed: int = 20260712,
+) -> dict[str, float | int]:
+    if replicates < 2:
+        raise ValueError("replicates must be at least two")
+    _require_paired_particle_ids(reference_inner, candidate_inner)
+    _require_paired_particle_ids(reference_outer, candidate_outer)
+    reference = (
+        load_classification(reference_inner, col),
+        load_classification(reference_outer, col),
+    )
+    candidate = (
+        load_classification(candidate_inner, col),
+        load_classification(candidate_outer, col),
+    )
+    for ref, cand in zip(reference, candidate, strict=True):
+        if any(a.shape != b.shape for a, b in zip(ref, cand, strict=True)):
+            raise ValueError("paired classification arrays have different shapes")
+    point_reference = barrier_overlap_samples(*reference[0], *reference[1], nbins)
+    point_candidate = barrier_overlap_samples(*candidate[0], *candidate[1], nbins)
+    generator = np.random.default_rng(seed)
+    changes = []
+    n_inner = len(reference[0][0])
+    n_outer = len(reference[1][0])
+    for _ in range(replicates):
+        inner_index = generator.integers(0, n_inner, size=n_inner)
+        outer_index = generator.integers(0, n_outer, size=n_outer)
+        ref_value = barrier_overlap_samples(
+            *(array[inner_index] for array in reference[0]),
+            *(array[outer_index] for array in reference[1]),
+            nbins,
+        )
+        candidate_value = barrier_overlap_samples(
+            *(array[inner_index] for array in candidate[0]),
+            *(array[outer_index] for array in candidate[1]),
+            nbins,
+        )
+        change = candidate_value - ref_value
+        if np.isfinite(change):
+            changes.append(change)
+    if len(changes) < 2:
+        raise ValueError("paired bootstrap produced fewer than two finite replicates")
+    return {
+        "reference": point_reference,
+        "candidate": point_candidate,
+        "change": point_candidate - point_reference,
+        "paired_standard_error": float(np.std(changes, ddof=1)),
+        "finite_replicates": len(changes),
+        "requested_replicates": replicates,
+        "bootstrap_seed": seed,
+        "bins": nbins,
+        "classifier_column": col,
+    }
+
+
+def _require_paired_particle_ids(reference: Path, candidate: Path) -> None:
+    for name in ("class_parts.dat", "times_lost.dat"):
+        reference_ids = np.loadtxt(reference / name, ndmin=2)[:, 0].astype(int)
+        candidate_ids = np.loadtxt(candidate / name, ndmin=2)[:, 0].astype(int)
+        if not np.array_equal(reference_ids, candidate_ids):
+            raise ValueError(f"paired {name} particle IDs differ")
 
 
 def _fortran_d(value: float) -> str:
@@ -421,6 +506,7 @@ def barrier_metrics(
     trace_time: float = 2.0e-2,
     seed: int = 12345,
     classifier: str = "topology",
+    overlap_bins: int = 16,
     simple_executable: str | os.PathLike | None = None,
     keep_workdir: bool = False,
     timeout_s: float = 3600.0,
@@ -447,7 +533,9 @@ def barrier_metrics(
             )
         classifier_metrics = {}
         for name, col in CLASS_COL.items():
-            overlap = barrier_overlap(runs["inner"], runs["outer"], col=col)
+            overlap = barrier_overlap(
+                runs["inner"], runs["outer"], nbins=overlap_bins, col=col
+            )
             chaotic_in, _, n_trapped_in = chaotic_fraction(runs["inner"], col=col)
             chaotic_out, _, n_trapped_out = chaotic_fraction(runs["outer"], col=col)
             classifier_metrics.update(

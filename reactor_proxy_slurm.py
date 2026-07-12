@@ -68,7 +68,9 @@ IFS=$'\t' read -r name candidate result <<< "$line"
   --desc-version {args.desc_version} \\
   --desc-source-sha256 {args.desc_source_sha256} \\
   --class-particles {args.class_particles} \\
-  --direct-particles {args.direct_particles}
+  --direct-particles {args.direct_particles} \\
+  --direct-trace-time {args.direct_trace_time} \\
+  --seed {args.seed}
 """
     (output / "run_calibration.sbatch").write_text(sbatch)
 
@@ -83,8 +85,10 @@ def main() -> None:
     parser.add_argument("--desc-source-sha256", required=True)
     parser.add_argument("--simple-executable", required=True)
     parser.add_argument("--simple-sha256", required=True)
-    parser.add_argument("--class-particles", type=int, default=1000)
+    parser.add_argument("--class-particles", type=int, default=3000)
     parser.add_argument("--direct-particles", type=int, default=512)
+    parser.add_argument("--direct-trace-time", type=float, default=3.0e-1)
+    parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--max-concurrent", type=int, default=1)
     parser.add_argument("--walltime", default="12:00:00")
     prepare(parser.parse_args())

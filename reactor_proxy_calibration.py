@@ -329,7 +329,7 @@ def evaluate(args: argparse.Namespace) -> None:
         b_scale=b_scale,
         facE_al=1.0,
         trace_time=2.0e-2,
-        seed=12345,
+        seed=args.seed,
         classifier="topology",
         simple_executable=args.simple_executable,
         keep_workdir=True,
@@ -340,6 +340,8 @@ def evaluate(args: argparse.Namespace) -> None:
         ntestpart=args.direct_particles,
         expected_simple_sha256=args.simple_sha256,
         simple_executable=args.simple_executable,
+        trace_time=args.direct_trace_time,
+        seed=args.seed,
         keep_workdir=True,
         timeout_s=args.timeout,
     )
@@ -427,8 +429,10 @@ def parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--desc-python", type=Path, required=True)
     evaluate_parser.add_argument("--desc-version", required=True)
     evaluate_parser.add_argument("--desc-source-sha256", required=True)
-    evaluate_parser.add_argument("--class-particles", type=int, default=1000)
+    evaluate_parser.add_argument("--class-particles", type=int, default=3000)
     evaluate_parser.add_argument("--direct-particles", type=int, default=512)
+    evaluate_parser.add_argument("--direct-trace-time", type=float, default=3.0e-1)
+    evaluate_parser.add_argument("--seed", type=int, default=12345)
     evaluate_parser.add_argument("--timeout", type=float, default=86400.0)
     evaluate_parser.add_argument("--max-aspect-relative", type=float, default=0.02)
     evaluate_parser.add_argument("--max-iota-change", type=float, default=0.02)
