@@ -28,6 +28,9 @@ fi
 test "$(sha256sum "$wout" | cut -d' ' -f1)" = "$wout_sha"
 test "$(sha256sum "$SIMPLE_X" | cut -d' ' -f1)" = "$SIMPLE_SHA256"
 test "$(sha256sum "$CODE_ROOT/evaluate_threshold_loss.py" | cut -d' ' -f1)" = "$EVALUATOR_SHA256"
+test "$(sha256sum "$CODE_ROOT/evaluate_barrier_proxy.py" | cut -d' ' -f1)" = "$BARRIER_EVALUATOR_SHA256"
+test "$(sha256sum "$CODE_ROOT/loss_threshold_objective.py" | cut -d' ' -f1)" = "$THRESHOLD_OBJECTIVE_SHA256"
+test "$(sha256sum "$CODE_ROOT/simple_barrier.py" | cut -d' ' -f1)" = "$SIMPLE_BARRIER_SHA256"
 export OMP_NUM_THREADS=$ALLOCATED_CPUS
 python3 "$CODE_ROOT/evaluate_threshold_loss.py" \
     --wout "$wout" \
