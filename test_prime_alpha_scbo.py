@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from prime_alpha_scbo import local_priming_rows, priming_rows
+import argparse
+
+from prime_alpha_scbo import campaign_configuration, local_priming_rows, priming_rows
 
 
 def test_priming_rows_add_reference_and_preserve_failures() -> None:
@@ -54,3 +56,19 @@ def test_priming_rows_add_reference_and_preserve_failures() -> None:
     local = local_priming_rows(scout, extra)
     assert [row["candidate_id"] for row in local] == [0, 1]
     assert local[1]["unit_x"] == extra[0]["unit_x"]
+
+
+def test_local_configuration_accepts_all_resolved_priming_rows() -> None:
+    rows = [{"unit_x": [0.5, 0.5]} for _ in range(17)]
+    args = argparse.Namespace(
+        local_only=True,
+        workers=8,
+        new_calls=128,
+        seed=7102,
+        initial_length=0.3,
+    )
+
+    configuration = campaign_configuration(args, rows)
+
+    assert configuration["initial_points"] == 17
+    assert configuration["budget"] == 145

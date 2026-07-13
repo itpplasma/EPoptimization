@@ -20,22 +20,30 @@ def prime(args: argparse.Namespace) -> None:
         if args.local_only
         else priming_rows(scout, extra)
     )
-    dimension = len(rows[0]["unit_x"])
-    configuration = {
-        "dimension": dimension,
-        "constraint_count": 1,
-        "budget": len(rows) + args.new_calls,
-        "seed": args.seed,
-        "workers": args.workers,
-        "initial_points": args.workers if args.local_only else max(2 * dimension, args.workers),
-        "initial_length": args.initial_length,
-    }
+    configuration = campaign_configuration(args, rows)
     state = prime_state(configuration, rows)
     state, requests = issue_candidates(state)
     write_checkpoint(args.state, state)
     args.requests.write_text(
         json.dumps({"requests": requests}, indent=2, sort_keys=True) + "\n"
     )
+
+
+def campaign_configuration(args: argparse.Namespace, rows: list[dict]) -> dict:
+    initial_points = (
+        max(len(rows), args.workers)
+        if args.local_only
+        else max(2 * len(rows[0]["unit_x"]), args.workers)
+    )
+    return {
+        "dimension": len(rows[0]["unit_x"]),
+        "constraint_count": 1,
+        "budget": len(rows) + args.new_calls,
+        "seed": args.seed,
+        "workers": args.workers,
+        "initial_points": initial_points,
+        "initial_length": args.initial_length,
+    }
 
 
 def priming_rows(scout: dict, extra: list[dict] | None = None) -> list[dict]:
