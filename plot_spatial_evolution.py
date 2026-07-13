@@ -102,6 +102,9 @@ def plot_evolution(
     )
     xedges = _edges(surfaces)
     yedges = _edges(lambdas)
+    tick_indices = np.unique(
+        np.linspace(0, len(lambdas) - 1, min(5, len(lambdas)), dtype=int)
+    )
     for row, (field, name, cmap, lower, upper) in enumerate(fields):
         images = []
         if upper is None:
@@ -121,7 +124,7 @@ def plot_evolution(
             sign = "> 0" if sign_value > 0.0 else "< 0"
             axis.set_title(rf"$v_\parallel {sign}$")
             axis.set_xticks(surfaces)
-            axis.set_yticks(lambdas)
+            axis.set_yticks(lambdas[tick_indices])
             if sign_index == 0:
                 axis.set_ylabel(r"$\mu B_0/E$")
         figure.colorbar(
