@@ -82,7 +82,8 @@ def loss_indicators(
         raise ValueError(f"particle inventory differs in {path}")
     times = particles[:, 1]
     prompt = (times > 0.0) & (times <= prompt_time)
-    late = (times > prompt_time) & (times < trace_time)
+    endpoint = np.isclose(times, trace_time, rtol=0.0, atol=1.0e-12)
+    late = (times > prompt_time) & (times < trace_time) & ~endpoint
     return {"prompt": prompt, "late": late, "total": prompt | late}
 
 
