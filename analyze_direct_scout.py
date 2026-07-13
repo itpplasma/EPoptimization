@@ -30,6 +30,7 @@ def analyze(args: argparse.Namespace) -> None:
         "seed": args.seed,
         "prompt_time": args.prompt_time,
         "trace_time": args.trace_time,
+        "late_reduction_target": args.late_target,
         "reference": window_counts(reference),
         "successful": len(successful),
         "failed": len(rows) - len(successful),
@@ -63,6 +64,12 @@ def analyze_case(case: dict, args, reference: dict[str, np.ndarray]) -> dict:
     row["objective"] = counts["total"]["loss"]
     row["threshold_score"] = result.get("threshold_score", result["objective"])
     row["wout_sha256"] = result["wout_sha256"]
+    row["observation"] = {
+        "value": row["objective"],
+        "variance": row["total"]["paired_se"] ** 2,
+        "constraints": [row["late"]["change"] + args.late_target],
+        "constraint_variances": [row["late"]["paired_se"] ** 2],
+    }
     return row
 
 
@@ -105,6 +112,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--prompt-time", type=float, default=1.0e-3)
     root.add_argument("--trace-time", type=float, default=3.0e-1)
     root.add_argument("--keep", type=int, default=16)
+    root.add_argument("--late-target", type=float, default=0.01)
     return root
 
 
