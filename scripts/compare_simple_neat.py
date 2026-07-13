@@ -17,6 +17,7 @@ Example:
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -58,7 +59,10 @@ LOSS_NAMELIST = """&config
 """
 
 
-def run_direct(wout, *, sbeg, n, trace_time, nsamples, rz, b, face, workdir, timeout_s):
+def run_direct(
+    wout, *, sbeg, n, trace_time, nsamples, rz, b, face, workdir, timeout_s,
+    simple_executable,
+):
     import shutil
 
     workdir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +78,7 @@ def run_direct(wout, *, sbeg, n, trace_time, nsamples, rz, b, face, workdir, tim
             b=f"{b:.16g}".replace("e", "d"),
         )
     )
-    simple_x = simple_barrier.find_simple_x()
+    simple_x = simple_barrier.find_simple_x(simple_executable)
     completed = subprocess.run(
         [str(simple_x)], cwd=str(workdir), capture_output=True, text=True,
         timeout=timeout_s,
@@ -92,7 +96,10 @@ def run_direct(wout, *, sbeg, n, trace_time, nsamples, rz, b, face, workdir, tim
     }
 
 
-def run_neat(wout, *, sbeg, n, trace_time, nsamples, rz, b, matched, timeout_s):
+def run_neat(
+    wout, *, sbeg, n, trace_time, nsamples, rz, b, matched, timeout_s,
+    simple_executable,
+):
     from neat.fields import Simple
     from neat.tracing import ChargedParticleEnsemble, ParticleEnsembleOrbit_Simple
 
@@ -103,7 +110,7 @@ def run_neat(wout, *, sbeg, n, trace_time, nsamples, rz, b, matched, timeout_s):
         multharm=7 if matched else 3,
         ns_s=5 if matched else 3,
         ns_tp=5 if matched else 3,
-        simple_executable=str(simple_barrier.find_simple_x()),
+        simple_executable=str(simple_barrier.find_simple_x(simple_executable)),
     )
     particles = ChargedParticleEnsemble(r_initial=sbeg)
     orbits = ParticleEnsembleOrbit_Simple(
@@ -153,6 +160,8 @@ def main():
                     help="run NEAT at the direct runner's resolution")
     ap.add_argument("--timeout", type=float, default=3600.0)
     ap.add_argument("--keep-workdir", action="store_true")
+    ap.add_argument("--simple-executable")
+    ap.add_argument("--out", type=Path)
     args = ap.parse_args()
 
     wout = Path(args.wout).expanduser()
@@ -165,15 +174,18 @@ def main():
           f"neat_resolution={'matched' if args.matched else 'default'}")
 
     base = Path(tempfile.mkdtemp(prefix="compare_simple_neat_"))
+    simple_executable = simple_barrier.find_simple_x(args.simple_executable)
     direct = run_direct(
         wout, sbeg=args.sbeg, n=args.nparticles, trace_time=args.trace_time,
         nsamples=args.nsamples, rz=rz, b=b, face=args.face_al,
         workdir=base / "direct", timeout_s=args.timeout,
+        simple_executable=simple_executable,
     )
     neat = run_neat(
         wout, sbeg=args.sbeg, n=args.nparticles, trace_time=args.trace_time,
         nsamples=args.nsamples, rz=rz, b=b, matched=args.matched,
         timeout_s=args.timeout,
+        simple_executable=simple_executable,
     )
 
     sd = loss_stats(direct, args.trace_time, args.t_prompt)
@@ -197,6 +209,20 @@ def main():
                   f"max {np.max(dt):.3g}s (n={both_lost.sum()})")
     else:
         print("particle counts differ; skipping per-particle comparison")
+
+    result = {
+        "wout_sha256": simple_barrier.file_sha256(wout),
+        "simple_sha256": simple_barrier.file_sha256(simple_executable),
+        "particles": args.nparticles,
+        "trace_time": args.trace_time,
+        "matched_resolution": args.matched,
+        "direct": {key: sd[key] for key in ("loss_total", "loss_prompt", "n_lost")},
+        "neat": {key: sn[key] for key in ("loss_total", "loss_prompt", "n_lost")},
+        "max_confined_fraction_difference": float(np.max(np.abs(loss_d - loss_n))),
+        "particle_status_agreement": int(agree.sum()) if len(direct["times_lost"]) == len(neat["times_lost"]) else None,
+    }
+    if args.out is not None:
+        args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 
     if args.keep_workdir:
         print("direct workdir:", base / "direct")

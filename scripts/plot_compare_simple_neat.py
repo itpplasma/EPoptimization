@@ -16,8 +16,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from compare_simple_neat import loss_stats, run_direct, run_neat
@@ -36,6 +34,7 @@ def main():
     ap.add_argument("--face-al", type=float, default=1.0)
     ap.add_argument("--timeout", type=float, default=7200.0)
     ap.add_argument("--out", default="compare_simple_neat.png")
+    ap.add_argument("--simple-executable")
     args = ap.parse_args()
 
     wout = Path(args.wout).expanduser()
@@ -46,7 +45,8 @@ def main():
 
     base = Path(tempfile.mkdtemp(prefix="plot_compare_"))
     common = dict(sbeg=args.sbeg, n=args.nparticles, trace_time=args.trace_time,
-                  nsamples=args.nsamples, rz=rz, b=b)
+                  nsamples=args.nsamples, rz=rz, b=b,
+                  simple_executable=args.simple_executable)
     direct = run_direct(wout, **common, face=args.face_al,
                         workdir=base / "direct", timeout_s=args.timeout)
     neat_matched = run_neat(wout, **common, matched=True, timeout_s=args.timeout)
@@ -82,7 +82,8 @@ def main():
                               f"(n={int(both.sum())}, class. disagree={disagree})")
     lims = [args.trace_time * 1e-4, args.trace_time]
     ax_orbit.plot(lims, lims, color="0.5", lw=1, zorder=0)
-    ax_orbit.set_xlim(lims); ax_orbit.set_ylim(lims)
+    ax_orbit.set_xlim(lims)
+    ax_orbit.set_ylim(lims)
     ax_orbit.set_xlabel(r"$t_\mathrm{lost}$ direct simple.x [s]")
     ax_orbit.set_ylabel(r"$t_\mathrm{lost}$ NEAT [s]")
     ax_orbit.legend(loc="upper left", fontsize=9)
