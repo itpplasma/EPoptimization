@@ -15,6 +15,10 @@ dependencies = [
     "pysimple",
     "vmec",
     "neatstel",
+    "h5py>=3.16.0",
+    "weightedpca",
+    "ground==9",
+    "bentley-ottmann==8",
 ]
 
 [tool.uv]
@@ -24,3 +28,10 @@ package = false
 pysimple = { path = "../SIMPLE", editable = true }
 vmec = { path = "../VMEC2000", editable = true }
 neatstel = { path = "../NEAT", editable = true }
+weightedpca = { git = "ssh://git@github.com/byoungj/weightedpca.git", rev = "6c7b83dd6b245f14dbdbb8abeff70f62f75ec8d8" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.15.21",
+]
