@@ -28,6 +28,7 @@ def prime(args: argparse.Namespace) -> None:
         "seed": args.seed,
         "workers": args.workers,
         "initial_points": args.workers if args.local_only else max(2 * dimension, args.workers),
+        "initial_length": args.initial_length,
     }
     state = prime_state(configuration, rows)
     state, requests = issue_candidates(state)
@@ -128,6 +129,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--workers", type=int, default=8)
     root.add_argument("--extra-responses", type=Path)
     root.add_argument("--local-only", action="store_true")
+    root.add_argument("--initial-length", type=float, default=0.2)
     return root
 
 
