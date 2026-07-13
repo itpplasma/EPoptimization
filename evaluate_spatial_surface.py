@@ -12,6 +12,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--out", type=Path, required=True)
     root.add_argument("--simple-executable", type=Path, required=True)
     root.add_argument("--trace-time", type=float, default=0.02)
+    root.add_argument("--timeout", type=float, default=3600.0)
     return root
 
 
@@ -23,4 +24,5 @@ if __name__ == "__main__":
         args.out.resolve(),
         args.simple_executable.resolve(),
         trace_time=args.trace_time,
+        timeout_seconds=args.timeout,
     )

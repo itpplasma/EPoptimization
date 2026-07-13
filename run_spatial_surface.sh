@@ -24,4 +24,5 @@ python3 "$CODE_ROOT/evaluate_spatial_surface.py" \
     --design "$design" \
     --out "$output" \
     --simple-executable "$SIMPLE_X" \
-    --trace-time "${TRACE_TIME:-0.02}"
+    --trace-time "${TRACE_TIME:-0.02}" \
+    --timeout "${SPATIAL_TIMEOUT_SECONDS:-3600}"
