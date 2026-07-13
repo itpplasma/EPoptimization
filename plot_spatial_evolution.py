@@ -123,7 +123,15 @@ def plot_evolution(
             images.append(image)
             sign = "> 0" if sign_value > 0.0 else "< 0"
             axis.set_title(rf"$v_\parallel {sign}$")
-            axis.set_xticks(surfaces)
+            if len(surfaces) > 4:
+                axis.set_xticks(
+                    surfaces,
+                    [f"{surface:g}" for surface in surfaces],
+                    rotation=45,
+                    ha="right",
+                )
+            else:
+                axis.set_xticks(surfaces)
             axis.set_yticks(lambdas[tick_indices])
             if sign_index == 0:
                 axis.set_ylabel(r"$\mu B_0/E$")
