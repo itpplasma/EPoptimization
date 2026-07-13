@@ -14,24 +14,28 @@ def test_classifier_response_keeps_late_objective_and_prompt_constraints_separat
         **common,
         "classifier": "topology",
         "shift_escape_volumes": [0.08, 0.07],
+        "shift_nonideal_volumes": [0.18, 0.17],
         "wout_sha256": "candidate-hash",
     }
     reference_topology = {
         **common,
         "classifier": "topology",
         "shift_escape_volumes": [0.10, 0.09],
+        "shift_nonideal_volumes": [0.20, 0.19],
         "wout_sha256": "reference-hash",
     }
     jpar = {
         **common,
         "classifier": "jpar",
         "shift_escape_volumes": [0.11, 0.08],
+        "shift_nonideal_volumes": [0.21, 0.18],
         "wout_sha256": "candidate-hash",
     }
     reference_jpar = {
         **common,
         "classifier": "jpar",
         "shift_escape_volumes": [0.10, 0.09],
+        "shift_nonideal_volumes": [0.20, 0.19],
         "wout_sha256": "reference-hash",
     }
     prompt = {
@@ -61,16 +65,27 @@ def test_classifier_response_keeps_late_objective_and_prompt_constraints_separat
         reference_jpar,
         prompt,
         reference_prompt,
+        {
+            "angular_status": "passed",
+            "fractal_features": [],
+            "heldout_status": "passed",
+            "horizon_status": "passed",
+            "late": {"feature": "late_topology_escape", "slope": 2.0},
+            "prompt": {"feature": "prompt_topology_nonideal", "slope": 3.0},
+            "radial_status": "passed",
+        },
         0.004,
         0.002,
         0.005,
     )
 
     observation = response["observation"]
-    assert np.isclose(observation["value"], -0.02)
+    assert np.isclose(observation["value"], -0.04)
     np.testing.assert_allclose(
         observation["constraints"],
-        [0.01, -0.01, 0.005, -0.005, 0.015, -0.015, 0.015, -0.015, 0.0],
+        [-0.04, -0.04, 0.055, -0.035, 0.0],
     )
-    assert len(response["metrics"]["constraint_names"]) == 9
+    assert len(response["metrics"]["constraint_names"]) == 5
+    assert response["metrics"]["late_feature"] == "late_topology_escape"
+    assert response["metrics"]["prompt_feature"] == "prompt_topology_nonideal"
     assert response["metrics"]["wout_sha256"] == "candidate-hash"

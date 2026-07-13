@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 index=${1:?candidate manifest index required}
+: "${FROZEN_HEADS:?}"
 wave_root=$CAMPAIGN_ROOT/$WAVE
 line=$(sed -n "$((index + 1))p" "$wave_root/manifest.tsv")
 IFS=$'\t' read -r case_name relative_input input_sha <<< "$line"
@@ -67,6 +68,7 @@ python3 "$CODE_ROOT/evaluate_classifier_proxy.py" \
     --topology "$proxy/surfaces/s0p25000/topology.npz" \
     --out "$proxy/prompt.json"
 topology_files=(
+    "$proxy/surfaces/s0p25000/topology.npz"
     "$proxy/surfaces/s0p30000/topology.npz"
     "$proxy/surfaces/s0p42500/topology.npz"
     "$proxy/surfaces/s0p48750/topology.npz"
@@ -97,6 +99,7 @@ python3 "$CODE_ROOT/build_classifier_scbo_response.py" \
     --reference-jpar "$REFERENCE_JPAR" \
     --prompt "$proxy/prompt.json" \
     --reference-prompt "$REFERENCE_PROMPT" \
+    --frozen-heads "$FROZEN_HEADS" \
     --gamma-c "$gamma_c" \
     --reference-gamma-c "$REFERENCE_GAMMA_C" \
     --prompt-tolerance "${PROMPT_TOLERANCE:-0.005}" \

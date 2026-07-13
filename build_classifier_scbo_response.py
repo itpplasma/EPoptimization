@@ -8,11 +8,15 @@ from pathlib import Path
 import numpy as np
 
 
-PROMPT_KEYS = (
-    "shift_unclassified_fractions",
-    "shift_nonideal_fractions",
-    "shift_jpar_nonideal_fractions",
-)
+FEATURE_FIELDS = {
+    "prompt_unclassified": ("prompt", "shift_unclassified_fractions"),
+    "prompt_topology_nonideal": ("prompt", "shift_nonideal_fractions"),
+    "prompt_jpar_nonideal": ("prompt", "shift_jpar_nonideal_fractions"),
+    "late_topology_escape": ("topology", "shift_escape_volumes"),
+    "late_topology_nonideal": ("topology", "shift_nonideal_volumes"),
+    "late_jpar_escape": ("jpar", "shift_escape_volumes"),
+    "late_jpar_nonideal": ("jpar", "shift_nonideal_volumes"),
+}
 
 
 def _paired_change(candidate: dict, reference: dict, key: str) -> np.ndarray:
@@ -84,6 +88,7 @@ def successful_response(
     reference_jpar: dict,
     prompt: dict,
     reference_prompt: dict,
+    frozen_heads: dict,
     gamma_c: float,
     reference_gamma_c: float,
     prompt_tolerance: float,
@@ -100,30 +105,51 @@ def successful_response(
         prompt,
         reference_prompt,
     )
-    topology_change = _paired_change(
-        topology, reference_topology, "shift_escape_volumes"
+    if frozen_heads.get("fractal_features") != []:
+        raise ValueError("fractal features are forbidden")
+    for gate in ("heldout_status", "horizon_status", "radial_status", "angular_status"):
+        if frozen_heads.get(gate) != "passed":
+            raise ValueError(f"frozen classifier head gate {gate} has not passed")
+    documents = {
+        "topology": (topology, reference_topology),
+        "jpar": (jpar, reference_jpar),
+        "prompt": (prompt, reference_prompt),
+    }
+    predictions = {}
+    for target in ("late", "prompt"):
+        head = frozen_heads[target]
+        feature = head["feature"]
+        if feature not in FEATURE_FIELDS:
+            raise ValueError(f"unknown frozen classifier feature {feature}")
+        source, field = FEATURE_FIELDS[feature]
+        candidate, reference = documents[source]
+        predictions[target] = float(head["slope"]) * _paired_change(
+            candidate, reference, field
+        )
+    late_prediction = predictions["late"]
+    prompt_prediction = predictions["prompt"]
+    constraints = late_prediction.tolist()
+    names = [f"late_prediction_shift_{index}" for index in range(len(late_prediction))]
+    constraints.extend((prompt_prediction - prompt_tolerance).tolist())
+    names.extend(
+        f"prompt_prediction_shift_{index}" for index in range(len(prompt_prediction))
     )
-    jpar_change = _paired_change(jpar, reference_jpar, "shift_escape_volumes")
-    constraints = jpar_change.tolist()
-    names = [f"late_jpar_shift_{index}" for index in range(len(jpar_change))]
-    for key in PROMPT_KEYS:
-        change = _paired_change(prompt, reference_prompt, key) - prompt_tolerance
-        constraints.extend(change.tolist())
-        names.extend(f"{key}_shift_{index}" for index in range(len(change)))
     gamma_limit = max(1.5 * reference_gamma_c, reference_gamma_c + 0.002)
     constraints.append(float(gamma_c - gamma_limit))
     names.append("gamma_c_s03")
     response = base_response(request, "ok", None)
     response["observation"] = {
-        "value": float(np.mean(topology_change)),
-        "variance": _mean_variance(topology_change),
+        "value": float(np.mean(late_prediction)),
+        "variance": _mean_variance(late_prediction),
         "constraints": constraints,
         "constraint_variances": [0.0] * len(constraints),
     }
     response["metrics"] = {
         "constraint_names": names,
-        "late_topology_shift_changes": topology_change.tolist(),
-        "late_jpar_shift_changes": jpar_change.tolist(),
+        "late_feature": frozen_heads["late"]["feature"],
+        "late_predictions": late_prediction.tolist(),
+        "prompt_feature": frozen_heads["prompt"]["feature"],
+        "prompt_predictions": prompt_prediction.tolist(),
         "prompt_tolerance": prompt_tolerance,
         "gamma_c_s03": gamma_c,
         "gamma_c_limit_s03": gamma_limit,
@@ -151,6 +177,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--reference-jpar", type=Path)
     root.add_argument("--prompt", type=Path)
     root.add_argument("--reference-prompt", type=Path)
+    root.add_argument("--frozen-heads", type=Path)
     root.add_argument("--gamma-c", type=float)
     root.add_argument("--reference-gamma-c", type=float)
     root.add_argument("--prompt-tolerance", type=float, default=0.005)
@@ -172,6 +199,7 @@ def main() -> None:
             args.reference_jpar,
             args.prompt,
             args.reference_prompt,
+            args.frozen_heads,
         )
         if any(path is None for path in paths):
             raise ValueError("successful response requires every proxy input")

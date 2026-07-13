@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+PROMPT_ORDER = (
+    "prompt_topology_nonideal",
+    "prompt_jpar_nonideal",
+    "prompt_unclassified",
+)
+LATE_ORDER = (
+    "late_topology_escape",
+    "late_jpar_escape",
+    "late_topology_nonideal",
+    "late_jpar_nonideal",
+)
+
+
+def _select(fits: dict, order: tuple[str, ...], target: str) -> dict:
+    for name in order:
+        result = fits[name]
+        if result["passes"]:
+            return {
+                "feature": name,
+                "slope": float(result["slope"]),
+                "training_spearman": float(result["spearman"]),
+            }
+    raise ValueError(f"no {target} classifier head passes the frozen training gates")
+
+
+def freeze(calibration: dict) -> dict:
+    if calibration.get("fractal_features") != []:
+        raise ValueError("fractal features are forbidden")
+    fits = calibration["fits"]
+    prompt = _select(fits, PROMPT_ORDER, "prompt")
+    late = _select(fits, LATE_ORDER, "late")
+    return {
+        "schema_name": "alpha-loss.frozen-classifier-heads",
+        "schema_version": 1,
+        "birth_surface": 0.25,
+        "trace_time": 0.02,
+        "prompt": prompt,
+        "late": late,
+        "gamma_c_role": "independent_guard",
+        "fractal_features": [],
+        "heldout_status": "pending",
+        "horizon_status": "pending",
+        "radial_status": "pending",
+        "angular_status": "pending",
+    }
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser()
+    root.add_argument("--calibration", type=Path, required=True)
+    root.add_argument("--out", type=Path, required=True)
+    return root
+
+
+def main() -> None:
+    args = parser().parse_args()
+    calibration = json.loads(args.calibration.read_text())
+    args.out.write_text(json.dumps(freeze(calibration), indent=2, sort_keys=True) + "\n")
+
+
+if __name__ == "__main__":
+    main()
