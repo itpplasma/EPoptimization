@@ -25,6 +25,7 @@ def test_condor_submit_is_shared_filesystem_and_credential_free() -> None:
         jobs=8,
         cpus=4,
         memory_mb=4096,
+        max_materialize=8,
     )
     assert "queue 8" in text
     assert "request_cpus = 4" in text
@@ -33,3 +34,4 @@ def test_condor_submit_is_shared_filesystem_and_credential_free() -> None:
     assert "getenv = False" in text
     assert "CAMPAIGN_ROOT=/temp/ert/runs/campaign" in text
     assert "WAVE=wave03" in text
+    assert "max_materialize = 8" in text

@@ -38,9 +38,12 @@ def condor_submit_text(
     jobs: int,
     cpus: int,
     memory_mb: int,
+    max_materialize: int | None = None,
 ) -> str:
     if jobs <= 0 or cpus <= 0 or memory_mb <= 0:
         raise ValueError("jobs, cpus, and memory must be positive")
+    if max_materialize is not None and max_materialize <= 0:
+        raise ValueError("max_materialize must be positive")
     logs = campaign_root / wave / "logs"
     merged = {
         **environment,
@@ -48,26 +51,26 @@ def condor_submit_text(
         "CAMPAIGN_ROOT": str(campaign_root),
         "WAVE": wave,
     }
-    return "\n".join(
-        [
-            "universe = vanilla",
-            f"executable = {executable}",
-            "arguments = $(Process)",
-            f'initialdir = {campaign_root}',
-            f'environment = "{_condor_environment(merged)}"',
-            f"request_cpus = {cpus}",
-            f"request_memory = {memory_mb}MB",
-            'requirements = (OpSys == "LINUX") && (Arch == "X86_64")',
-            "should_transfer_files = NO",
-            "getenv = False",
-            f"output = {logs}/condor_$(Cluster)_$(Process).out",
-            f"error = {logs}/condor_$(Cluster)_$(Process).err",
-            f"log = {logs}/condor_$(Cluster).log",
-            "notification = Never",
-            f"queue {jobs}",
-            "",
-        ]
-    )
+    lines = [
+        "universe = vanilla",
+        f"executable = {executable}",
+        "arguments = $(Process)",
+        f"initialdir = {campaign_root}",
+        f'environment = "{_condor_environment(merged)}"',
+        f"request_cpus = {cpus}",
+        f"request_memory = {memory_mb}MB",
+        'requirements = (OpSys == "LINUX") && (Arch == "X86_64")',
+        "should_transfer_files = NO",
+        "getenv = False",
+        f"output = {logs}/condor_$(Cluster)_$(Process).out",
+        f"error = {logs}/condor_$(Cluster)_$(Process).err",
+        f"log = {logs}/condor_$(Cluster).log",
+        "notification = Never",
+    ]
+    if max_materialize is not None:
+        lines.append(f"max_materialize = {max_materialize}")
+    lines.extend([f"queue {jobs}", ""])
+    return "\n".join(lines)
 
 
 def snapshot_aclustercapacity(host: str) -> str:
@@ -89,6 +92,7 @@ def write_submit(args: argparse.Namespace) -> None:
         jobs=args.jobs,
         cpus=args.cpus,
         memory_mb=args.memory_mb,
+        max_materialize=args.max_materialize,
     )
     args.out.write_text(text)
 
@@ -122,6 +126,7 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--jobs", type=int, default=8)
     submit.add_argument("--cpus", type=int, required=True)
     submit.add_argument("--memory-mb", type=int, required=True)
+    submit.add_argument("--max-materialize", type=int)
     submit.add_argument("--out", type=Path, required=True)
     submit.set_defaults(action=write_submit)
     return root
