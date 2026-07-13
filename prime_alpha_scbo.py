@@ -27,7 +27,7 @@ def prime(args: argparse.Namespace) -> None:
         "budget": len(rows) + args.new_calls,
         "seed": args.seed,
         "workers": args.workers,
-        "initial_points": max(2 * dimension, args.workers),
+        "initial_points": args.workers if args.local_only else max(2 * dimension, args.workers),
     }
     state = prime_state(configuration, rows)
     state, requests = issue_candidates(state)
