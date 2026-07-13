@@ -200,7 +200,7 @@ def plot_surface(topology_file: Path, out: Path, label: str) -> None:
         bbox_to_anchor=(0.5, 0.94),
     )
     figure.suptitle(
-        rf"{label} topology on $s={surface:.2f}$; solid color: topology, contours: $|B|$",
+        rf"{label} topology on $s={surface:g}$; solid color: topology, contours: $|B|$",
         y=0.995,
     )
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.78))
