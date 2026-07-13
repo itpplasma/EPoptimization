@@ -12,12 +12,16 @@ def _write_surface(path: Path, surface: float, hole: slice) -> Path:
     np.savez_compressed(
         path,
         topology=topology,
+        jpar=topology,
         particle_index=particle_index,
         weights=np.ones((2, 8, 8)) / 64.0,
         lambda_values=np.array([0.5]),
         shifts=np.array([0.0, 0.5]),
         signs=np.array([1.0, -1.0]),
         surface=np.array(surface),
+        simple_sha256=np.array("simple-hash"),
+        trace_time=np.array(0.02),
+        wout_sha256=np.array("wout-hash"),
     )
     return path
 
@@ -30,7 +34,14 @@ def test_atlas_sorts_surfaces_and_scores_each_shift(tmp_path: Path) -> None:
     np.testing.assert_allclose(result.surfaces, [0.3, 0.8])
     assert result.score > 0.0
     assert result.shift_scores.shape == (2,)
+    assert result.shift_nonideal_volumes.shape == (2,)
+    assert result.shift_escape_volumes.shape == (2,)
+    assert result.shift_minimum_separator_widths.shape == (2,)
+    assert result.shift_mean_separator_widths.shape == (2,)
+    assert result.shift_open_channel_fractions.shape == (2,)
     assert result.refinement_interval == (0.3, 0.8)
+    jpar_result = score_spatial_atlas(atlas, sigma_cells=0.5, classifier="jpar")
+    assert jpar_result.score == result.score
 
 
 def test_misaligned_middle_surface_closes_channel(tmp_path: Path) -> None:

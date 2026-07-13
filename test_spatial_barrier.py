@@ -3,6 +3,7 @@ import numpy as np
 from spatial_barrier import (
     periodic_components,
     periodic_kernel_risk,
+    radial_band_features,
     spatial_barrier_score,
     strongest_channel,
 )
@@ -65,3 +66,48 @@ def test_spatial_score_uses_population_weights_and_reports_worst() -> None:
     assert result.channel_scores[0, 0] > result.channel_scores[1, 1] > 0.0
     assert result.score < result.worst_channel
     assert result.score > result.channel_scores[1, 1]
+
+
+def test_radial_band_distinguishes_thin_and_thick_separators() -> None:
+    surfaces = np.linspace(0.3, 0.8, 5)
+    nonideal = np.ones((5, 6, 6), dtype=bool)
+    thin = nonideal.copy()
+    thin[2] = False
+    thick = nonideal.copy()
+    thick[1:4] = False
+    weights = np.ones_like(nonideal, dtype=float) / 36.0
+
+    thin_result = radial_band_features(thin, weights, surfaces)
+    thick_result = radial_band_features(thick, weights, surfaces)
+
+    assert np.isclose(thin_result.minimum_separator_width, 0.125)
+    assert np.isclose(thick_result.minimum_separator_width, 0.375)
+    assert thick_result.nonideal_volume < thin_result.nonideal_volume
+
+
+def test_radial_band_reports_zero_separator_for_connected_hole() -> None:
+    surfaces = np.array([0.3, 0.55, 0.8])
+    nonideal = np.zeros((3, 6, 6), dtype=bool)
+    nonideal[:, 2:4, 1:3] = True
+    weights = np.ones_like(nonideal, dtype=float) / 36.0
+
+    result = radial_band_features(nonideal, weights, surfaces)
+
+    assert result.minimum_separator_width == 0.0
+    assert result.escape_volume > 0.0
+
+
+def test_radial_band_integrals_are_stable_under_exact_refinement() -> None:
+    surfaces = np.array([0.3, 0.55, 0.8])
+    nonideal = np.zeros((3, 6, 6), dtype=bool)
+    nonideal[:, 1:4, 2:5] = True
+    weights = np.ones_like(nonideal, dtype=float) / 36.0
+    baseline = radial_band_features(nonideal, weights, surfaces)
+    refined = radial_band_features(
+        np.insert(nonideal, 1, nonideal[0], axis=0),
+        np.insert(weights, 1, weights[0], axis=0),
+        np.array([0.3, 0.425, 0.55, 0.8]),
+    )
+
+    assert refined.nonideal_volume == baseline.nonideal_volume
+    assert refined.escape_volume == baseline.escape_volume

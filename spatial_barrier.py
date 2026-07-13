@@ -14,6 +14,14 @@ class SpatialBarrierResult:
     risk: np.ndarray
 
 
+@dataclass(frozen=True)
+class RadialBandResult:
+    nonideal_volume: float
+    escape_volume: float
+    minimum_separator_width: float
+    normalized_separator_width: float
+
+
 def periodic_kernel_risk(
     nonideal: np.ndarray,
     valid: np.ndarray,
@@ -69,6 +77,106 @@ def periodic_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
     for item in range(1, count + 1):
         output[labels == item] = remap[root(item)]
     return output, len(roots)
+
+
+def periodic_volume_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 3:
+        raise ValueError("volume component mask must be three-dimensional")
+    labels, count = label(mask)
+    parent = np.arange(count + 1)
+
+    def root(item: int) -> int:
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def join(left: int, right: int) -> None:
+        if left and right:
+            parent[root(right)] = root(left)
+
+    for surface in range(mask.shape[0]):
+        for column in range(mask.shape[2]):
+            join(int(labels[surface, 0, column]), int(labels[surface, -1, column]))
+        for row in range(mask.shape[1]):
+            join(int(labels[surface, row, 0]), int(labels[surface, row, -1]))
+    roots = sorted({root(item) for item in range(1, count + 1)})
+    remap = {item: index + 1 for index, item in enumerate(roots)}
+    output = np.zeros_like(labels)
+    for item in range(1, count + 1):
+        output[labels == item] = remap[root(item)]
+    return output, len(roots)
+
+
+def radial_cell_widths(surfaces: np.ndarray) -> np.ndarray:
+    surfaces = np.asarray(surfaces, dtype=float)
+    if surfaces.ndim != 1 or len(surfaces) < 2:
+        raise ValueError("radial bands require at least two surfaces")
+    intervals = np.diff(surfaces)
+    if not np.all(np.isfinite(surfaces)) or np.any(intervals <= 0.0):
+        raise ValueError("radial surfaces must be finite and strictly increasing")
+    widths = np.empty_like(surfaces)
+    widths[0] = 0.5 * intervals[0]
+    widths[-1] = 0.5 * intervals[-1]
+    widths[1:-1] = 0.5 * (intervals[:-1] + intervals[1:])
+    return widths
+
+
+def _spread_nonideal_cost(cost: np.ndarray, nonideal: np.ndarray) -> np.ndarray:
+    components, count = periodic_components(nonideal)
+    output = cost.copy()
+    for item in range(1, count + 1):
+        selected = components == item
+        output[selected] = np.min(cost[selected])
+    return output
+
+
+def minimum_radial_separator_width(
+    nonideal: np.ndarray, surfaces: np.ndarray
+) -> float:
+    nonideal = np.asarray(nonideal, dtype=bool)
+    widths = radial_cell_widths(surfaces)
+    if nonideal.ndim != 3 or nonideal.shape[0] != len(widths):
+        raise ValueError("radial mask must have shape (surface, theta, zeta)")
+    cost = np.where(nonideal[0], 0.0, widths[0])
+    cost = _spread_nonideal_cost(cost, nonideal[0])
+    for index in range(1, len(widths)):
+        cost = cost + np.where(nonideal[index], 0.0, widths[index])
+        cost = _spread_nonideal_cost(cost, nonideal[index])
+    return float(np.min(cost))
+
+
+def radial_band_features(
+    nonideal: np.ndarray, angular_weights: np.ndarray, surfaces: np.ndarray
+) -> RadialBandResult:
+    nonideal = np.asarray(nonideal, dtype=bool)
+    weights = np.asarray(angular_weights, dtype=float)
+    widths = radial_cell_widths(surfaces)
+    if nonideal.ndim != 3 or weights.shape != nonideal.shape:
+        raise ValueError("band arrays must have shape (surface, theta, zeta)")
+    if nonideal.shape[0] != len(widths) or np.any(weights < 0.0):
+        raise ValueError("band arrays and radial surfaces differ")
+    totals = np.sum(weights, axis=(1, 2))
+    if np.any(totals <= 0.0):
+        raise ValueError("every radial surface needs positive angular weight")
+    normalized = weights / totals[:, None, None]
+    radial_range = float(np.sum(widths))
+    volume = float(np.sum(widths[:, None, None] * normalized * nonideal))
+    components, count = periodic_volume_components(nonideal)
+    escape = np.zeros_like(nonideal)
+    for item in range(1, count + 1):
+        selected = components == item
+        if np.any(selected[0]) and np.any(selected[-1]):
+            escape |= selected
+    escape_volume = float(np.sum(widths[:, None, None] * normalized * escape))
+    separator = minimum_radial_separator_width(nonideal, surfaces)
+    return RadialBandResult(
+        nonideal_volume=volume / radial_range,
+        escape_volume=escape_volume / radial_range,
+        minimum_separator_width=separator,
+        normalized_separator_width=separator / radial_range,
+    )
 
 
 def _component_capacities(

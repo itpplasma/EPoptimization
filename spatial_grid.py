@@ -366,18 +366,21 @@ def run_surface_classification(
             f"tolerance is {LAMBDA_TOLERANCE:.6g}"
         )
     topology = np.zeros(calibrated["particle_index"].shape, dtype=np.int8)
+    jpar = np.zeros_like(topology)
     passing = np.zeros_like(topology, dtype=bool)
     lost = np.zeros_like(topology, dtype=bool)
     trap_parameter = np.full_like(topology, np.nan, dtype=float)
     selected = calibrated["particle_index"] >= 0
     indices = calibrated["particle_index"][selected]
     topology[selected] = classes[indices, 4].astype(np.int8)
+    jpar[selected] = classes[indices, 3].astype(np.int8)
     passing[selected] = times[indices, 2] < 0.0
     lost[selected] = times[indices, 1] < trace_time * (1.0 - 1.0e-12)
     trap_parameter[selected] = times[indices, 2]
     np.savez_compressed(
         out / "topology.npz",
         topology=topology,
+        jpar=jpar,
         b=calibrated["b"],
         lambda_values=design["lambda"],
         lambda_error_max=np.array(lambda_error),
