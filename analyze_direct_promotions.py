@@ -28,7 +28,11 @@ def read_manifest(path: Path) -> dict[int, list[dict]]:
 
 
 def validate_result(
-    path: Path, particles: int, seed: int, wout_sha256: str
+    path: Path,
+    particles: int,
+    seed: int,
+    wout_sha256: str,
+    birth_surface: float,
 ) -> dict:
     result = json.loads(path.read_text())
     expected = {
@@ -37,7 +41,7 @@ def validate_result(
         "seed": seed,
         "wout_sha256": wout_sha256,
         "simple_sha256": SIMPLE_SHA256,
-        "birth_surface": 0.3,
+        "birth_surface": birth_surface,
         "prompt_time": 0.001,
         "trace_time": 0.3,
     }
@@ -51,8 +55,16 @@ def validate_result(
     return result
 
 
-def load_case(path: Path, particles: int, seed: int, wout_sha256: str) -> dict:
-    result = validate_result(path / "result.json", particles, seed, wout_sha256)
+def load_case(
+    path: Path,
+    particles: int,
+    seed: int,
+    wout_sha256: str,
+    birth_surface: float,
+) -> dict:
+    result = validate_result(
+        path / "result.json", particles, seed, wout_sha256, birth_surface
+    )
     windows = loss_indicators(path / "direct" / "times_lost.dat", 0.001, 0.3)
     if len(windows["total"]) != particles:
         raise ValueError(f"particle count differs in {path}")
@@ -86,17 +98,22 @@ def summarize_candidate(
     per_seed = {}
     for entry in sorted(entries, key=lambda item: item["seed"]):
         seed = entry["seed"]
+        reference_case = args.reference_case_template.format(seed=seed)
+        if Path(reference_case).name != reference_case:
+            raise ValueError("reference case template must produce one directory name")
         reference = load_case(
-            args.reference_results / f"seed{seed}_base",
+            args.reference_results / reference_case,
             args.particles,
             seed,
             args.base_wout_sha256,
+            args.birth_surface,
         )
         candidate = load_case(
             args.results / entry["case"],
             args.particles,
             seed,
             entry["wout_sha256"],
+            args.birth_surface,
         )
         references.append(reference)
         candidates.append(candidate)
@@ -142,6 +159,7 @@ def analyze(args: argparse.Namespace) -> dict:
     return {
         "schema_name": "alpha-loss.direct-multiseed-promotion",
         "schema_version": 1,
+        "birth_surface": args.birth_surface,
         "particles_per_seed": args.particles,
         "seeds": args.seeds,
         "total_reduction_target": args.total_target,
@@ -161,6 +179,8 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--particles", type=int, default=1024)
     root.add_argument("--seeds", type=int, nargs="+", default=[12345, 22345, 32345, 42345])
     root.add_argument("--base-wout-sha256", default=BASE_WOUT_SHA256)
+    root.add_argument("--birth-surface", type=float, default=0.3)
+    root.add_argument("--reference-case-template", default="seed{seed}_base")
     root.add_argument("--total-target", type=float, default=0.02)
     root.add_argument("--late-target", type=float, default=0.01)
     return root

@@ -9,7 +9,13 @@ import numpy as np
 from analyze_direct_promotions import BASE_WOUT_SHA256, SIMPLE_SHA256, analyze, gate
 
 
-def write_case(path: Path, times: list[float], seed: int, wout_hash: str) -> None:
+def write_case(
+    path: Path,
+    times: list[float],
+    seed: int,
+    wout_hash: str,
+    birth_surface: float = 0.3,
+) -> None:
     direct = path / "direct"
     direct.mkdir(parents=True)
     np.savetxt(direct / "times_lost.dat", list(enumerate(times, start=1)))
@@ -21,7 +27,7 @@ def write_case(path: Path, times: list[float], seed: int, wout_hash: str) -> Non
         "seed": seed,
         "wout_sha256": wout_hash,
         "simple_sha256": SIMPLE_SHA256,
-        "birth_surface": 0.3,
+        "birth_surface": birth_surface,
         "prompt_time": 0.001,
         "trace_time": 0.3,
         "direct": {"prompt_count": prompt, "late_count": late, "total_count": prompt + late},
@@ -54,6 +60,8 @@ def test_analyze_concatenates_seed_pairs_and_applies_both_gates(tmp_path) -> Non
         base_wout_sha256=BASE_WOUT_SHA256,
         total_target=0.02,
         late_target=0.01,
+        birth_surface=0.3,
+        reference_case_template="seed{seed}_base",
     )
 
     result = analyze(args)
@@ -68,3 +76,35 @@ def test_gate_requires_material_and_statistical_reduction() -> None:
     assert not gate({"change": -0.019, "paired_se": 0.001}, 0.02)
     assert not gate({"change": -0.021, "paired_se": 0.02}, 0.02)
     assert gate({"change": -0.04, "paired_se": 0.02}, 0.02)
+
+
+def test_analyze_requires_declared_s025_reference_contract(tmp_path) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    results = tmp_path / "results"
+    references = tmp_path / "references"
+    candidate_hash = "b" * 64
+    reference = [0.02, 0.03, 0.04, 0.05]
+    candidate = [0.3] * 4
+    write_case(
+        references / "base-seed17", reference, 17, BASE_WOUT_SHA256, 0.25
+    )
+    write_case(results / "candidate-9-seed17", candidate, 17, candidate_hash, 0.25)
+    manifest.write_text(f"candidate-9-seed17\t9\tunused\t{candidate_hash}\t17\n")
+    args = argparse.Namespace(
+        manifest=manifest,
+        results=results,
+        reference_results=references,
+        output=tmp_path / "out.json",
+        particles=4,
+        seeds=[17],
+        base_wout_sha256=BASE_WOUT_SHA256,
+        total_target=0.02,
+        late_target=0.01,
+        birth_surface=0.25,
+        reference_case_template="base-seed{seed}",
+    )
+
+    result = analyze(args)
+
+    assert result["birth_surface"] == 0.25
+    assert result["promoted_candidates"] == ["9"]
