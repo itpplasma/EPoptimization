@@ -13,11 +13,17 @@ from scipy.ndimage import maximum_filter, minimum_filter
 
 
 COLORS = ("#8A8A8A", "#276FBF", "#D1495B", "#F28E2B")
-LABELS = (
+TOPOLOGY_LABELS = (
     "passing / unclassified",
     "ideal",
     "non-ideal",
     "lost, no topology",
+)
+JPAR_LABELS = (
+    "passing / unclassified",
+    "regular",
+    "stochastic",
+    "lost, unclassified",
 )
 B_TARGET = 5.865
 
@@ -65,9 +71,9 @@ def _scatter_points(
         axis.scatter(zeta[points[:, 1]], theta[points[:, 0]], **style)
 
 
-def _legend_handles():
+def _legend_handles(labels):
     return (
-        [Patch(facecolor=color, label=label) for color, label in zip(COLORS, LABELS)]
+        [Patch(facecolor=color, label=label) for color, label in zip(COLORS, labels)]
         + [Patch(facecolor="white", edgecolor="black", label="forbidden")]
         + [
             Line2D([], [], color="#7A3E9D", linestyle="--", label="turning contour"),
@@ -84,9 +90,17 @@ def _legend_handles():
     )
 
 
-def plot_surface(topology_file: Path, out: Path, label: str, shift: int = 0) -> None:
+def plot_surface(
+    topology_file: Path,
+    out: Path,
+    label: str,
+    shift: int = 0,
+    classifier: str = "topology",
+) -> None:
     data = np.load(topology_file)
-    topology = data["topology"]
+    if classifier not in ("topology", "jpar"):
+        raise ValueError("classifier must be topology or jpar")
+    topology = data[classifier]
     particle_index = data["particle_index"]
     lost = data["lost"] if "lost" in data else np.zeros_like(topology, dtype=bool)
     lambdas = data["lambda_values"]
@@ -195,16 +209,19 @@ def plot_surface(topology_file: Path, out: Path, label: str, shift: int = 0) -> 
     for axis in axes[:, 0]:
         axis.set_ylabel(r"Boozer poloidal angle $\theta$")
     figure.legend(
-        handles=_legend_handles(),
+        handles=_legend_handles(
+            TOPOLOGY_LABELS if classifier == "topology" else JPAR_LABELS
+        ),
         loc="upper center",
         ncol=3,
         fontsize=9,
         frameon=False,
         bbox_to_anchor=(0.5, 0.94),
     )
+    classifier_label = "topology" if classifier == "topology" else "J-parallel"
     figure.suptitle(
-        rf"{label} topology on $s={surface:g}$, lattice shift {shifts[shift]:g}; "
-        rf"solid color: topology, contours: $|B|$",
+        rf"{label} {classifier_label} classes on $s={surface:g}$, "
+        rf"lattice shift {shifts[shift]:g}; solid color: class, contours: $|B|$",
         y=0.995,
     )
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.78))
@@ -220,9 +237,16 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--out", type=Path, required=True)
     root.add_argument("--label", default="configuration")
     root.add_argument("--shift-index", type=int, default=0)
+    root.add_argument("--classifier", choices=("topology", "jpar"), default="topology")
     return root
 
 
 if __name__ == "__main__":
     args = parser().parse_args()
-    plot_surface(args.topology, args.out, args.label, args.shift_index)
+    plot_surface(
+        args.topology,
+        args.out,
+        args.label,
+        args.shift_index,
+        args.classifier,
+    )
