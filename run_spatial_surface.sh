@@ -8,6 +8,9 @@ test -n "$case_name"
 design=$ATLAS_ROOT/$design_relative
 output=$ATLAS_ROOT/$output_relative
 wout=$ATLAS_ROOT/$wout_relative
+if test -f "$output/topology.npz"; then
+    exit 0
+fi
 test "$(sha256sum "$design/design.npz" | cut -d' ' -f1)" = "$design_sha"
 test "$(sha256sum "$design/start.dat" | cut -d' ' -f1)" = "$start_sha"
 test "$(sha256sum "$wout" | cut -d' ' -f1)" = "$wout_sha"
