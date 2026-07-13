@@ -48,7 +48,7 @@ def evaluate(args: argparse.Namespace) -> None:
     classification = output / "classification"
     shutil.move(str(workdir), classification)
     for surface in ("inner", "outer"):
-        _write_execution_record(
+        write_execution_record(
             classification / surface,
             executable,
             executable_hash,
@@ -89,7 +89,7 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def _write_execution_record(
+def write_execution_record(
     run: Path,
     executable: Path,
     executable_hash: str,

@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from evaluate_barrier_proxy import parser as barrier_parser
+from evaluate_direct_loss import parser as direct_parser
 from simple_barrier import (
     barrier_overlap,
     chaotic_fraction,
@@ -64,6 +65,24 @@ def main():
     assert args.particles == 3000
     assert args.seed == 12345
     assert (args.inner_surface, args.outer_surface, args.bins) == (0.3, 0.6, 16)
+    direct_args = direct_parser().parse_args(
+        [
+            "--wout",
+            "/tmp/wout.nc",
+            "--out",
+            "/tmp/output",
+            "--simple-executable",
+            "/tmp/simple.x",
+            "--simple-sha256",
+            "0" * 64,
+            "--wout-sha256",
+            "1" * 64,
+        ]
+    )
+    assert direct_args.particles == 1024
+    assert direct_args.seed == 12345
+    assert (direct_args.birth_surface, direct_args.prompt_time) == (0.3, 1.0e-3)
+    assert direct_args.trace_time == 0.3
     windows = loss_windows(
         np.array([-1.0, 5e-4, 1e-3, 2e-3, 0.3, 0.31]),
         prompt_time=1e-3,
