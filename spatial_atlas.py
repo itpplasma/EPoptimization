@@ -113,6 +113,7 @@ def _radial_band_summary(
                     topology[:, mu_index, sign_index, shift_index] == 2,
                     weights[:, shift_index],
                     surfaces,
+                    ideal=topology[:, mu_index, sign_index, shift_index] == 1,
                 )
                 nonideal_volume[mu_index, sign_index, shift_index] = (
                     result.nonideal_volume

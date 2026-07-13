@@ -133,22 +133,37 @@ def _spread_nonideal_cost(cost: np.ndarray, nonideal: np.ndarray) -> np.ndarray:
 
 
 def minimum_radial_separator_width(
-    nonideal: np.ndarray, surfaces: np.ndarray
+    nonideal: np.ndarray,
+    surfaces: np.ndarray,
+    ideal: np.ndarray | None = None,
 ) -> float:
     nonideal = np.asarray(nonideal, dtype=bool)
+    ideal = ~nonideal if ideal is None else np.asarray(ideal, dtype=bool)
     widths = radial_cell_widths(surfaces)
-    if nonideal.ndim != 3 or nonideal.shape[0] != len(widths):
+    if (
+        nonideal.ndim != 3
+        or nonideal.shape[0] != len(widths)
+        or ideal.shape != nonideal.shape
+        or np.any(nonideal & ideal)
+    ):
         raise ValueError("radial mask must have shape (surface, theta, zeta)")
-    cost = np.where(nonideal[0], 0.0, widths[0])
+    cost = np.where(nonideal[0], 0.0, np.where(ideal[0], widths[0], np.inf))
     cost = _spread_nonideal_cost(cost, nonideal[0])
     for index in range(1, len(widths)):
-        cost = cost + np.where(nonideal[index], 0.0, widths[index])
+        layer = np.where(
+            nonideal[index], 0.0, np.where(ideal[index], widths[index], np.inf)
+        )
+        cost = cost + layer
         cost = _spread_nonideal_cost(cost, nonideal[index])
-    return float(np.min(cost))
+    minimum = float(np.min(cost))
+    return minimum if np.isfinite(minimum) else 0.0
 
 
 def radial_band_features(
-    nonideal: np.ndarray, angular_weights: np.ndarray, surfaces: np.ndarray
+    nonideal: np.ndarray,
+    angular_weights: np.ndarray,
+    surfaces: np.ndarray,
+    ideal: np.ndarray | None = None,
 ) -> RadialBandResult:
     nonideal = np.asarray(nonideal, dtype=bool)
     weights = np.asarray(angular_weights, dtype=float)
@@ -170,7 +185,7 @@ def radial_band_features(
         if np.any(selected[0]) and np.any(selected[-1]):
             escape |= selected
     escape_volume = float(np.sum(widths[:, None, None] * normalized * escape))
-    separator = minimum_radial_separator_width(nonideal, surfaces)
+    separator = minimum_radial_separator_width(nonideal, surfaces, ideal)
     return RadialBandResult(
         nonideal_volume=volume / radial_range,
         escape_volume=escape_volume / radial_range,

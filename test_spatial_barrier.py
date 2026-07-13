@@ -97,6 +97,18 @@ def test_radial_band_reports_zero_separator_for_connected_hole() -> None:
     assert result.escape_volume > 0.0
 
 
+def test_unresolved_cells_do_not_supply_ideal_separator_width() -> None:
+    surfaces = np.array([0.3, 0.55, 0.8])
+    nonideal = np.zeros((3, 6, 6), dtype=bool)
+    ideal = np.ones_like(nonideal)
+    ideal[1] = False
+    weights = np.ones_like(nonideal, dtype=float) / 36.0
+
+    result = radial_band_features(nonideal, weights, surfaces, ideal=ideal)
+
+    assert result.minimum_separator_width == 0.0
+
+
 def test_radial_band_integrals_are_stable_under_exact_refinement() -> None:
     surfaces = np.array([0.3, 0.55, 0.8])
     nonideal = np.zeros((3, 6, 6), dtype=bool)
