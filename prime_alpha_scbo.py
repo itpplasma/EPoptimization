@@ -14,7 +14,8 @@ def prime(args: argparse.Namespace) -> None:
     )
 
     scout = json.loads(args.scout.read_text())
-    rows = priming_rows(scout)
+    extra = load_extra_responses(args.extra_responses)
+    rows = priming_rows(scout, extra)
     dimension = len(rows[0]["unit_x"])
     configuration = {
         "dimension": dimension,
@@ -32,7 +33,7 @@ def prime(args: argparse.Namespace) -> None:
     )
 
 
-def priming_rows(scout: dict) -> list[dict]:
+def priming_rows(scout: dict, extra: list[dict] | None = None) -> list[dict]:
     dimension = len(scout["cases"][0]["unit"])
     target = float(scout["late_reduction_target"])
     rows = [
@@ -61,7 +62,19 @@ def priming_rows(scout: dict) -> list[dict]:
                     failure_kind=case["failure_kind"],
                 )
             )
+    if extra:
+        expected = list(range(len(rows), len(rows) + len(extra)))
+        if [row["candidate_id"] for row in extra] != expected:
+            raise ValueError("extra SCBO responses are not contiguous with the scout")
+        rows.extend(extra)
     return rows
+
+
+def load_extra_responses(root: Path | None) -> list[dict]:
+    if root is None:
+        return []
+    rows = [json.loads(path.read_text()) for path in Path(root).glob("*/response.json")]
+    return sorted(rows, key=lambda row: row["candidate_id"])
 
 
 def evaluation_row(candidate_id, unit_x, observation, failure_kind=None) -> dict:
@@ -86,6 +99,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--seed", type=int, required=True)
     root.add_argument("--new-calls", type=int, default=128)
     root.add_argument("--workers", type=int, default=8)
+    root.add_argument("--extra-responses", type=Path)
     return root
 
 

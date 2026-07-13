@@ -26,11 +26,27 @@ def test_priming_rows_add_reference_and_preserve_failures() -> None:
         ],
     }
 
-    rows = priming_rows(scout)
+    extra = [
+        {
+            "candidate_id": 3,
+            "unit_x": [0.4, 0.6],
+            "observation": {
+                "value": -0.02,
+                "variance": 0.001,
+                "constraints": [-0.01],
+                "constraint_variances": [0.001],
+            },
+            "status": "ok",
+            "failure_kind": None,
+        }
+    ]
 
-    assert [row["candidate_id"] for row in rows] == [0, 1, 2]
+    rows = priming_rows(scout, extra)
+
+    assert [row["candidate_id"] for row in rows] == [0, 1, 2, 3]
     assert rows[0]["unit_x"] == [0.5, 0.5]
     assert rows[0]["observation"]["constraints"] == [0.01]
     assert rows[1]["observation"]["value"] == -0.05
     assert rows[2]["observation"] is None
     assert rows[2]["failure_kind"] == "equilibrium_failure"
+    assert rows[3] == extra[0]
