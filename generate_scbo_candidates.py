@@ -66,6 +66,9 @@ def generate_case(vmec, transform, anchor, request, args, output, fixed):
     case = output / name
     case.mkdir()
     record = {"candidate_id": candidate_id, "unit_x": unit.tolist(), "case": name}
+    (case / "request.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
     if surface.is_self_intersecting():
         record.update({"status": "failed", "failure_kind": "self_intersection"})
         return record
