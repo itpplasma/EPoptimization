@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evaluate_threshold_loss import parser
+from evaluate_threshold_loss import parser, score_trace
 from loss_threshold_objective import threshold_crossing, threshold_objective
 
 
@@ -60,3 +60,26 @@ def test_threshold_evaluator_defaults_freeze_search_contract() -> None:
     assert args.trace_time == 0.3
     assert args.loss_threshold == 0.38
     assert args.prompt_time == 1.0e-3
+
+
+def test_full_trace_search_objective_is_total_loss() -> None:
+    args = parser().parse_args(
+        [
+            "--wout",
+            "/tmp/wout.nc",
+            "--out",
+            "/tmp/output",
+            "--simple-executable",
+            "/tmp/simple.x",
+            "--simple-sha256",
+            "0" * 64,
+            "--wout-sha256",
+            "1" * 64,
+        ]
+    )
+    curve = np.array([[0.001, 0.8, 0.0], [0.3, 0.55, 0.0]])
+
+    scores = score_trace(curve, 0.45, args)
+
+    assert scores["objective"] == 0.45
+    assert scores["threshold_score"] != scores["objective"]

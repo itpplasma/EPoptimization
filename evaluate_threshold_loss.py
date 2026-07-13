@@ -42,14 +42,7 @@ def evaluate(args: argparse.Namespace) -> None:
     shutil.move(str(workdir), direct)
     write_execution_record(direct, executable, executable_hash, wout_hash, args.seed)
     curve = np.loadtxt(direct / "confined_fraction.dat", ndmin=2)
-    crossing = threshold_crossing(curve, args.loss_threshold)
-    objective = threshold_objective(
-        metrics["total_loss"],
-        args.trace_time,
-        args.loss_threshold,
-        crossing_time=crossing,
-        epsilon=args.epsilon,
-    )
+    scores = score_trace(curve, metrics["total_loss"], args)
     result = {
         "status": "ok",
         "wout_sha256": wout_hash,
@@ -61,8 +54,7 @@ def evaluate(args: argparse.Namespace) -> None:
         "trace_time": args.trace_time,
         "loss_threshold": args.loss_threshold,
         "epsilon": args.epsilon,
-        "objective": objective,
-        "crossing_time": crossing,
+        **scores,
         "full_trace_completed": True,
         "late_constraint_available": True,
         "direct": metrics,
@@ -70,6 +62,22 @@ def evaluate(args: argparse.Namespace) -> None:
     (output / "result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n"
     )
+
+
+def score_trace(curve: np.ndarray, total_loss: float, args: argparse.Namespace) -> dict:
+    crossing = threshold_crossing(curve, args.loss_threshold)
+    threshold_score = threshold_objective(
+        total_loss,
+        args.trace_time,
+        args.loss_threshold,
+        crossing_time=crossing,
+        epsilon=args.epsilon,
+    )
+    return {
+        "objective": float(total_loss),
+        "threshold_score": threshold_score,
+        "crossing_time": crossing,
+    }
 
 
 def validate(args: argparse.Namespace) -> None:

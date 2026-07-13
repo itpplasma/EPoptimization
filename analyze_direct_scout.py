@@ -60,7 +60,8 @@ def analyze_case(case: dict, args, reference: dict[str, np.ndarray]) -> dict:
             raise ValueError(f"stored {name} count differs for {case['case']}")
         row[name] = paired_summary(reference[name], candidate[name])
         row[name].update(counts[name])
-    row["objective"] = result["objective"]
+    row["objective"] = counts["total"]["loss"]
+    row["threshold_score"] = result.get("threshold_score", result["objective"])
     row["wout_sha256"] = result["wout_sha256"]
     return row
 
