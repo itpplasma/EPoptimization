@@ -24,6 +24,7 @@ def test_surface_title_preserves_adaptive_radius(tmp_path, monkeypatch) -> None:
         particle_index=np.zeros_like(topology),
         lambda_values=np.array([0.75]),
         signs=np.array([1.0, -1.0]),
+        shifts=np.array([0.0, 0.5]),
         surface=np.array(0.425),
         b=np.ones((2, 3, 3)),
     )
@@ -35,5 +36,6 @@ def test_surface_title_preserves_adaptive_radius(tmp_path, monkeypatch) -> None:
         return original(figure, title, *args, **kwargs)
 
     monkeypatch.setattr(Figure, "suptitle", record_title)
-    plot_surface(topology_file, tmp_path / "surface.png", "test")
+    plot_surface(topology_file, tmp_path / "surface.png", "test", shift=1)
     assert "s=0.425" in titles[0]
+    assert "lattice shift 0.5" in titles[0]

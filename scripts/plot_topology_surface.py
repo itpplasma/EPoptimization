@@ -84,17 +84,20 @@ def _legend_handles():
     )
 
 
-def plot_surface(topology_file: Path, out: Path, label: str) -> None:
+def plot_surface(topology_file: Path, out: Path, label: str, shift: int = 0) -> None:
     data = np.load(topology_file)
     topology = data["topology"]
     particle_index = data["particle_index"]
     lost = data["lost"] if "lost" in data else np.zeros_like(topology, dtype=bool)
     lambdas = data["lambda_values"]
     signs = data["signs"] if "signs" in data else np.array([-1.0, 1.0])
+    shifts = data["shifts"] if "shifts" in data else np.arange(topology.shape[2])
     surface = float(data["surface"])
-    field = data["b"][0]
     if topology.ndim != 5 or topology.shape[1:3] != (2, 2):
         raise ValueError("topology must have shape (lambda, sign, shift, theta, zeta)")
+    if not 0 <= shift < topology.shape[2]:
+        raise ValueError("lattice shift index is outside the topology grid")
+    field = data["b"][shift]
 
     nlambda, _, _, ntheta, nzeta = topology.shape
     nrows, ncolumns, panel_index = _layout(nlambda)
@@ -118,11 +121,11 @@ def plot_surface(topology_file: Path, out: Path, label: str) -> None:
         for sign_index, sign_value in enumerate(signs):
             sign = r"$v_\parallel > 0$" if sign_value > 0.0 else r"$v_\parallel < 0$"
             axis = axes.flat[panel_index(mu_index, sign_index)]
-            values = topology[mu_index, sign_index, 0].copy()
-            unresolved_loss = lost[mu_index, sign_index, 0] & (values == 0)
+            values = topology[mu_index, sign_index, shift].copy()
+            unresolved_loss = lost[mu_index, sign_index, shift] & (values == 0)
             values[unresolved_loss] = 3
             values = np.ma.masked_where(
-                particle_index[mu_index, sign_index, 0] < 0,
+                particle_index[mu_index, sign_index, shift] < 0,
                 values,
             )
             axis.pcolormesh(
@@ -200,7 +203,8 @@ def plot_surface(topology_file: Path, out: Path, label: str) -> None:
         bbox_to_anchor=(0.5, 0.94),
     )
     figure.suptitle(
-        rf"{label} topology on $s={surface:g}$; solid color: topology, contours: $|B|$",
+        rf"{label} topology on $s={surface:g}$, lattice shift {shifts[shift]:g}; "
+        rf"solid color: topology, contours: $|B|$",
         y=0.995,
     )
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.78))
@@ -215,9 +219,10 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--topology", type=Path, required=True)
     root.add_argument("--out", type=Path, required=True)
     root.add_argument("--label", default="configuration")
+    root.add_argument("--shift-index", type=int, default=0)
     return root
 
 
 if __name__ == "__main__":
     args = parser().parse_args()
-    plot_surface(args.topology, args.out, args.label)
+    plot_surface(args.topology, args.out, args.label, args.shift_index)
