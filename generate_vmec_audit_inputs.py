@@ -54,6 +54,7 @@ def generate(args: argparse.Namespace) -> None:
             case.mkdir(parents=True)
             input_path = case / f"input.{name}"
             vmec.write_input(str(input_path))
+            normalize_vmec_input(input_path)
             cases.append(
                 {
                     "case": name,
@@ -104,6 +105,11 @@ def file_sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def normalize_vmec_input(path: Path) -> None:
+    lines = [line.rstrip() for line in Path(path).read_text().splitlines()]
+    Path(path).write_text("\n".join(lines).rstrip() + "\n")
 
 
 def parser() -> argparse.ArgumentParser:

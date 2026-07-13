@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from generate_vmec_audit_inputs import case_specs, relative_case_path
+from generate_vmec_audit_inputs import (
+    case_specs,
+    normalize_vmec_input,
+    relative_case_path,
+)
 
 
 def test_case_specs_are_deterministic_and_cover_sobol_block() -> None:
@@ -28,3 +34,12 @@ def test_case_specs_reject_invalid_shape() -> None:
 
 def test_relative_case_path_keeps_directories_bounded() -> None:
     assert str(relative_case_path(12, 95, "d12_095")) == "d12/b02/d12_095"
+
+
+def test_normalize_vmec_input_removes_only_layout_noise(tmp_path: Path) -> None:
+    path = tmp_path / "input.case"
+    path.write_text("&INDATA  \n  MPOL = 9 \n/\n\n")
+
+    normalize_vmec_input(path)
+
+    assert path.read_text() == "&INDATA\n  MPOL = 9\n/\n"
