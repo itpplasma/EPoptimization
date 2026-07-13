@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -73,6 +74,59 @@ def condor_submit_text(
     return "\n".join(lines)
 
 
+def slurm_array_text(
+    *,
+    executable: Path,
+    campaign_root: Path,
+    wave: str,
+    environment: dict[str, str],
+    jobs: int,
+    cpus: int,
+    memory_mb: int,
+    time_limit: str,
+    max_concurrent: int,
+) -> str:
+    if min(jobs, cpus, memory_mb, max_concurrent) <= 0:
+        raise ValueError("jobs, resources, and concurrency must be positive")
+    if not time_limit or "\n" in time_limit:
+        raise ValueError("time limit must be one nonempty line")
+    merged = {
+        **environment,
+        "ALLOCATED_CPUS": str(cpus),
+        "CAMPAIGN_ROOT": str(campaign_root),
+        "WAVE": wave,
+    }
+    for key in merged:
+        if not key.isidentifier():
+            raise ValueError(f"invalid environment key {key}")
+    logs = campaign_root / wave / "logs"
+    lines = [
+        "#!/bin/bash",
+        f"#SBATCH --array=0-{jobs - 1}%{max_concurrent}",
+        "#SBATCH --nodes=1",
+        "#SBATCH --ntasks=1",
+        f"#SBATCH --cpus-per-task={cpus}",
+        f"#SBATCH --mem={memory_mb}M",
+        f"#SBATCH --time={time_limit}",
+        f"#SBATCH --output={logs}/slurm_%A_%a.out",
+        f"#SBATCH --error={logs}/slurm_%A_%a.err",
+        "set -euo pipefail",
+        "",
+    ]
+    lines.extend(
+        f"export {key}={shlex.quote(str(value))}"
+        for key, value in sorted(merged.items())
+    )
+    lines.extend(
+        [
+            "",
+            f'{shlex.quote(str(executable))} "$SLURM_ARRAY_TASK_ID"',
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def snapshot_aclustercapacity(host: str) -> str:
     command = [
         "ssh",
@@ -93,6 +147,22 @@ def write_submit(args: argparse.Namespace) -> None:
         cpus=args.cpus,
         memory_mb=args.memory_mb,
         max_materialize=args.max_materialize,
+    )
+    args.out.write_text(text)
+
+
+def write_slurm(args: argparse.Namespace) -> None:
+    environment = json.loads(args.environment.read_text())
+    text = slurm_array_text(
+        executable=args.executable.resolve(),
+        campaign_root=args.campaign_root.resolve(),
+        wave=args.wave,
+        environment=environment,
+        jobs=args.jobs,
+        cpus=args.cpus,
+        memory_mb=args.memory_mb,
+        time_limit=args.time,
+        max_concurrent=args.max_concurrent,
     )
     args.out.write_text(text)
 
@@ -129,6 +199,18 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--max-materialize", type=int)
     submit.add_argument("--out", type=Path, required=True)
     submit.set_defaults(action=write_submit)
+    slurm = commands.add_parser("write-slurm")
+    slurm.add_argument("--executable", type=Path, required=True)
+    slurm.add_argument("--campaign-root", type=Path, required=True)
+    slurm.add_argument("--wave", required=True)
+    slurm.add_argument("--environment", type=Path, required=True)
+    slurm.add_argument("--jobs", type=int, default=8)
+    slurm.add_argument("--cpus", type=int, required=True)
+    slurm.add_argument("--memory-mb", type=int, required=True)
+    slurm.add_argument("--time", default="04:00:00")
+    slurm.add_argument("--max-concurrent", type=int, default=8)
+    slurm.add_argument("--out", type=Path, required=True)
+    slurm.set_defaults(action=write_slurm)
     return root
 
 
