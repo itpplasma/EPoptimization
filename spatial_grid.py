@@ -238,10 +238,8 @@ def spatial_classify_namelist(
         b=simple_barrier._fortran_d(simple_barrier.reactor_scale(wout)[1]),
         seed=12345,
     )
-    return (
-        namelist.replace("&config\n", "&config\n  startmode = 2\n", 1)
-        .replace("tcut = -1d0", f"tcut = {trace}")
-        .replace("class_plot = .True.", "class_plot = .False.")
+    return namelist.replace("&config\n", "&config\n  startmode = 2\n", 1).replace(
+        "class_plot = .True.", "class_plot = .False."
     )
 
 

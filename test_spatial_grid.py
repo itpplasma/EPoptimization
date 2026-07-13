@@ -51,7 +51,8 @@ def test_spatial_classifier_preserves_toroidal_launch_position(monkeypatch) -> N
     )
     assert "startmode = 2" in text
     assert "class_plot = .False." in text
-    assert "tcut = 0.02" in text
+    assert "trace_time = 0.02" in text
+    assert "tcut = -1d0" in text
 
 
 def test_invariant_calibration_uses_pinned_executable_field() -> None:
