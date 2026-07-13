@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prime_alpha_scbo import priming_rows
+from prime_alpha_scbo import local_priming_rows, priming_rows
 
 
 def test_priming_rows_add_reference_and_preserve_failures() -> None:
@@ -50,3 +50,7 @@ def test_priming_rows_add_reference_and_preserve_failures() -> None:
     assert rows[2]["observation"] is None
     assert rows[2]["failure_kind"] == "equilibrium_failure"
     assert rows[3] == extra[0]
+
+    local = local_priming_rows(scout, extra)
+    assert [row["candidate_id"] for row in local] == [0, 1]
+    assert local[1]["unit_x"] == extra[0]["unit_x"]

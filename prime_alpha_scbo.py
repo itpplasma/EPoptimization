@@ -15,7 +15,11 @@ def prime(args: argparse.Namespace) -> None:
 
     scout = json.loads(args.scout.read_text())
     extra = load_extra_responses(args.extra_responses)
-    rows = priming_rows(scout, extra)
+    rows = (
+        local_priming_rows(scout, extra)
+        if args.local_only
+        else priming_rows(scout, extra)
+    )
     dimension = len(rows[0]["unit_x"])
     configuration = {
         "dimension": dimension,
@@ -77,6 +81,29 @@ def load_extra_responses(root: Path | None) -> list[dict]:
     return sorted(rows, key=lambda row: row["candidate_id"])
 
 
+def local_priming_rows(scout: dict, extra: list[dict]) -> list[dict]:
+    if not extra:
+        raise ValueError("local SCBO priming requires completed responses")
+    dimension = len(extra[0]["unit_x"])
+    rows = [
+        evaluation_row(
+            0,
+            [0.5] * dimension,
+            {
+                "value": 0.0,
+                "variance": 0.0,
+                "constraints": [float(scout["late_reduction_target"])],
+                "constraint_variances": [0.0],
+            },
+        )
+    ]
+    for candidate_id, response in enumerate(extra, start=1):
+        row = dict(response)
+        row["candidate_id"] = candidate_id
+        rows.append(row)
+    return rows
+
+
 def evaluation_row(candidate_id, unit_x, observation, failure_kind=None) -> dict:
     return {
         "candidate_id": candidate_id,
@@ -100,6 +127,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--new-calls", type=int, default=128)
     root.add_argument("--workers", type=int, default=8)
     root.add_argument("--extra-responses", type=Path)
+    root.add_argument("--local-only", action="store_true")
     return root
 
 
