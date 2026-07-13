@@ -9,8 +9,10 @@ curve also supplies an unbiased short-time alpha-loss metric. The barrier
 surface run skips passing particles because only trapped classifications enter
 the overlap.
 
-class_parts.dat columns: idx, s, perp_inv, jpar, topology, fractal with codes
-0=prompt-loss, 1=regular/ideal, 2=chaotic/non-ideal.
+class_parts.dat columns are idx, s, perp_inv, J-parallel, topology, and fractal.
+The classifier codes are 0=unclassified, 1=regular/ideal, and
+2=stochastic/non-ideal. The classifier proxy uses only the J-parallel and
+topology columns.
 """
 
 from __future__ import annotations
