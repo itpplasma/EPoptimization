@@ -224,7 +224,6 @@ def generate(args: argparse.Namespace) -> None:
 
 
 def desc_worker(args: argparse.Namespace) -> None:
-    import desc
     from desc.grid import LinearGrid
     from desc.objectives import EffectiveRipple, GammaC
     from desc.vmec import VMECIO
