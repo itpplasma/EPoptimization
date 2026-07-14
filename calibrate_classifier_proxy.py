@@ -174,10 +174,10 @@ def radial_convergence(levels: dict[str, np.ndarray]) -> dict:
         axis=0,
     )
     correlations = []
-    for delta in deltas[:-1]:
-        for shift in range(delta.shape[1]):
+    for left, right in zip(deltas[:-1], deltas[1:], strict=True):
+        for shift in range(left.shape[1]):
             correlations.append(
-                float(spearmanr(delta[:, shift], deltas[-1][:, shift]).statistic)
+                float(spearmanr(left[:, shift], right[:, shift]).statistic)
             )
     return {
         "maximum_relative_change": float(np.max(relative_changes)),

@@ -60,6 +60,24 @@ def test_radial_convergence_requires_value_sign_and_order_stability() -> None:
     assert not rejected["passes"]
 
 
+def test_radial_convergence_compares_successive_orderings() -> None:
+    rankings = (
+        np.array([4, 3, 1, 3, 3, 0, 1]),
+        np.array([4, 1, 0, 3, 4, 0, 0]),
+        np.array([3, 0, 0, 2, 4, 0, 0]),
+    )
+    levels = {}
+    for name, ranking in zip(("coarse", "medium", "fine"), rankings, strict=True):
+        values = np.concatenate(([100.0], 100.0 + 1.0e-3 * (ranking + 10)))
+        levels[name] = np.column_stack((values, values))
+    result = radial_convergence(levels)
+    assert result["passes"]
+    assert np.allclose(
+        result["ordering_spearman"],
+        [0.9019607843137254, 0.9019607843137254, 0.9290701563922508, 0.9290701563922508],
+    )
+
+
 def test_prediction_uses_the_frozen_radial_grid(monkeypatch) -> None:
     calls = []
 
