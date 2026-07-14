@@ -338,8 +338,17 @@ def calibrate(
 def predict_case(frozen: dict, candidate: Path, reference: Path) -> dict:
     if frozen.get("fractal_features") != []:
         raise ValueError("fractal features are forbidden")
-    candidate_features = extract_features(candidate)
-    reference_features = extract_features(reference)
+    radial_surfaces = frozen.get("radial_surfaces")
+    if (
+        not isinstance(radial_surfaces, list)
+        or len(radial_surfaces) < 2
+        or radial_surfaces[0] != "s0p25000"
+        or len(set(radial_surfaces)) != len(radial_surfaces)
+    ):
+        raise ValueError("frozen heads do not define a valid radial grid")
+    surfaces = tuple(radial_surfaces)
+    candidate_features = extract_features(candidate, surfaces)
+    reference_features = extract_features(reference, surfaces)
     predictions = {}
     feature_deltas = {}
     for target in ("prompt", "late"):

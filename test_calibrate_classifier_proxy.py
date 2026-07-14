@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 
-from calibrate_classifier_proxy import grouped_scalar_fit, radial_convergence
+import calibrate_classifier_proxy
+from calibrate_classifier_proxy import grouped_scalar_fit, predict_case, radial_convergence
 
 
 def test_grouped_scalar_fit_requires_rank_sign_and_shift_agreement() -> None:
@@ -55,3 +58,27 @@ def test_radial_convergence_requires_value_sign_and_order_stability() -> None:
         {"coarse": 1.02 * fine, "medium": bad, "fine": fine}
     )
     assert not rejected["passes"]
+
+
+def test_prediction_uses_the_frozen_radial_grid(monkeypatch) -> None:
+    calls = []
+
+    def fake_extract(path: Path, surfaces: tuple[str, ...]) -> dict:
+        calls.append((path, surfaces))
+        return {
+            "prompt_topology_nonideal": np.array([0.2, 0.3]),
+            "late_topology_escape": np.array([0.4, 0.5]),
+            "wout_sha256": "candidate" if path.name == "candidate" else "reference",
+        }
+
+    monkeypatch.setattr(calibrate_classifier_proxy, "extract_features", fake_extract)
+    frozen = {
+        "fractal_features": [],
+        "radial_surfaces": ["s0p25000", "s0p45625", "s0p80000"],
+        "prompt": {"feature": "prompt_topology_nonideal", "slope": 2.0},
+        "late": {"feature": "late_topology_escape", "slope": -3.0},
+    }
+    result = predict_case(frozen, Path("candidate"), Path("reference"))
+    expected = ("s0p25000", "s0p45625", "s0p80000")
+    assert calls == [(Path("candidate"), expected), (Path("reference"), expected)]
+    assert result["fractal_features"] == []

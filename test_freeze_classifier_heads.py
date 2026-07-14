@@ -16,6 +16,9 @@ def test_freeze_selects_smallest_passing_nonfractal_heads() -> None:
     result = freeze(
         {
             "fractal_features": [],
+            "radial_levels": {
+                "fine": ["s0p25000", "s0p30000", "s0p45625", "s0p80000"]
+            },
             "fits": {
                 "prompt_topology_nonideal": _fit(True),
                 "prompt_jpar_nonideal": _fit(True),
@@ -30,6 +33,12 @@ def test_freeze_selects_smallest_passing_nonfractal_heads() -> None:
     assert result["prompt"]["feature"] == "prompt_topology_nonideal"
     assert result["late"]["feature"] == "late_topology_nonideal"
     assert result["fractal_features"] == []
+    assert result["radial_surfaces"] == [
+        "s0p25000",
+        "s0p30000",
+        "s0p45625",
+        "s0p80000",
+    ]
 
 
 def test_freeze_rejects_missing_head_or_fractal_input() -> None:
@@ -46,6 +55,12 @@ def test_freeze_rejects_missing_head_or_fractal_input() -> None:
         )
     }
     with pytest.raises(ValueError, match="prompt"):
-        freeze({"fractal_features": [], "fits": fits})
+        freeze(
+            {
+                "fractal_features": [],
+                "radial_levels": {"fine": ["s0p25000", "s0p80000"]},
+                "fits": fits,
+            }
+        )
     with pytest.raises(ValueError, match="fractal"):
         freeze({"fractal_features": ["dimension"], "fits": fits})

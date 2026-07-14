@@ -37,6 +37,14 @@ def _select(
 def freeze(calibration: dict) -> dict:
     if calibration.get("fractal_features") != []:
         raise ValueError("fractal features are forbidden")
+    radial_surfaces = calibration.get("radial_levels", {}).get("fine")
+    if (
+        not isinstance(radial_surfaces, list)
+        or len(radial_surfaces) < 2
+        or radial_surfaces[0] != "s0p25000"
+        or len(set(radial_surfaces)) != len(radial_surfaces)
+    ):
+        raise ValueError("calibration must define the converged fine radial grid")
     fits = calibration["fits"]
     prompt = _select(fits, PROMPT_ORDER, "prompt")
     late = _select(fits, LATE_ORDER, "late", require_radial=True)
@@ -47,6 +55,7 @@ def freeze(calibration: dict) -> dict:
         "trace_time": 0.02,
         "prompt": prompt,
         "late": late,
+        "radial_surfaces": radial_surfaces,
         "gamma_c_role": "independent_guard",
         "fractal_features": [],
         "heldout_status": "pending",
