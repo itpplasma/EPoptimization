@@ -10,8 +10,9 @@ from spatial_grid import file_sha256
 
 def build_manifest(atlas_root: Path) -> str:
     lines = []
-    for manifest_path in sorted(atlas_root.glob("*/design/manifest.json")):
+    for manifest_path in sorted(atlas_root.glob("*/design*/manifest.json")):
         configuration = manifest_path.parent.parent.name
+        design_directory = manifest_path.parent.name
         manifest = json.loads(manifest_path.read_text())
         wout = manifest_path.parent.parent / "wout.nc"
         if file_sha256(wout) != manifest["wout_sha256"]:
@@ -20,7 +21,7 @@ def build_manifest(atlas_root: Path) -> str:
             case = f"{configuration}-{record['name']}"
             values = (
                 case,
-                f"{configuration}/design/{record['name']}",
+                f"{configuration}/{design_directory}/{record['name']}",
                 record["design_sha256"],
                 record["start_sha256"],
                 f"{configuration}/wout.nc",
