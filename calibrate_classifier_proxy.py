@@ -67,6 +67,7 @@ def extract_features(
         "late_jpar_nonideal": jpar.shift_nonideal_volumes,
         "simple_sha256": str(atlas["simple_sha256"]),
         "wout_sha256": str(atlas["wout_sha256"]),
+        "surface_values": np.asarray(atlas["surfaces"], dtype=float),
     }
     for name in (*PROMPT_FEATURES, *LATE_FEATURES):
         values = np.asarray(features[name], dtype=float)
@@ -224,7 +225,7 @@ def _collect_calibration(
     reference: Path,
     label_rows: dict[str, dict],
     level_surfaces: dict[str, tuple[str, ...]],
-) -> tuple[list[str], dict, dict, dict]:
+) -> tuple[list[str], dict, dict, dict, list[float]]:
     reference_by_level = {
         level: extract_features(reference, surfaces)
         for level, surfaces in level_surfaces.items()
@@ -252,6 +253,12 @@ def _collect_calibration(
             for level, surfaces in level_surfaces.items()
         }
         features = candidate_by_level["fine"]
+        for level in level_surfaces:
+            if not np.array_equal(
+                candidate_by_level[level]["surface_values"],
+                reference_by_level[level]["surface_values"],
+            ):
+                raise ValueError(f"candidate {candidate} radial grid differs")
         if features["wout_sha256"] != label_rows[candidate]["wout_sha256"]:
             raise ValueError(f"candidate {candidate} equilibrium differs from labels")
         if features["simple_sha256"] != reference_features["simple_sha256"]:
@@ -274,7 +281,13 @@ def _collect_calibration(
         "late_change": late,
         "late_paired_se": late_se,
     }
-    return cases, changes, radial_values, labels
+    return (
+        cases,
+        changes,
+        radial_values,
+        labels,
+        np.asarray(reference_features["surface_values"], dtype=float).tolist(),
+    )
 
 
 def calibrate(
@@ -285,7 +298,13 @@ def calibrate(
 ) -> dict:
     label_rows, label_document = _label_rows(labels)
     levels = _radial_levels(level_surfaces)
-    cases, changes, radial_values, label_values = _collect_calibration(
+    (
+        cases,
+        changes,
+        radial_values,
+        label_values,
+        radial_surface_values,
+    ) = _collect_calibration(
         atlas_root, reference, label_rows, levels
     )
     fits = {}
@@ -324,6 +343,7 @@ def calibrate(
         "radial_levels": {
             level: list(surfaces) for level, surfaces in levels.items()
         },
+        "radial_surface_values": radial_surface_values,
         "cases": cases,
         "features": {
             name: np.asarray(values).tolist() for name, values in changes.items()

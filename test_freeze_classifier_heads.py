@@ -19,6 +19,7 @@ def test_freeze_selects_smallest_passing_nonfractal_heads() -> None:
             "radial_levels": {
                 "fine": ["s0p25000", "s0p30000", "s0p45625", "s0p80000"]
             },
+            "radial_surface_values": [0.25, 0.3, 0.45625, 0.8],
             "fits": {
                 "prompt_topology_nonideal": _fit(True),
                 "prompt_jpar_nonideal": _fit(True),
@@ -39,6 +40,7 @@ def test_freeze_selects_smallest_passing_nonfractal_heads() -> None:
         "s0p45625",
         "s0p80000",
     ]
+    assert result["radial_surface_values"] == [0.25, 0.3, 0.45625, 0.8]
 
 
 def test_freeze_rejects_missing_head_or_fractal_input() -> None:
@@ -59,6 +61,7 @@ def test_freeze_rejects_missing_head_or_fractal_input() -> None:
             {
                 "fractal_features": [],
                 "radial_levels": {"fine": ["s0p25000", "s0p80000"]},
+                "radial_surface_values": [0.25, 0.8],
                 "fits": fits,
             }
         )

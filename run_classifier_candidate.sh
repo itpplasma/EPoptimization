@@ -41,18 +41,26 @@ fi
 
 wout=$case_root/wout_${case_name}.nc
 proxy=$case_root/classifier_proxy
+mapfile -t surface_names < <(
+    python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["radial_surfaces"]))' "$FROZEN_HEADS"
+)
+mapfile -t surface_values < <(
+    python3 -c 'import json,sys; print("\n".join(map(str,json.load(open(sys.argv[1]))["radial_surface_values"])))' "$FROZEN_HEADS"
+)
+test "${#surface_names[@]}" -eq "${#surface_values[@]}"
+test "${surface_names[0]}" = s0p25000
 if ! test -d "$proxy/design"; then
     python3 "$CODE_ROOT/generate_spatial_grid.py" \
         --wout "$wout" \
         --out "$proxy/design" \
-        --surfaces 0.25 0.30 0.425 0.4875 0.55 0.80 \
+        --surfaces "${surface_values[@]}" \
         --ntheta 16 \
         --nzeta 16 \
         --nmu 9
 fi
 
 export OMP_NUM_THREADS=$ALLOCATED_CPUS
-for surface in s0p25000 s0p30000 s0p42500 s0p48750 s0p55000 s0p80000; do
+for surface in "${surface_names[@]}"; do
     if ! test -f "$proxy/surfaces/$surface/topology.npz"; then
         python3 "$CODE_ROOT/evaluate_spatial_surface.py" \
             --wout "$wout" \
@@ -68,13 +76,10 @@ python3 "$CODE_ROOT/evaluate_classifier_proxy.py" \
     --topology "$proxy/surfaces/s0p25000/topology.npz" \
     --out "$proxy/prompt.json"
 topology_files=(
-    "$proxy/surfaces/s0p25000/topology.npz"
-    "$proxy/surfaces/s0p30000/topology.npz"
-    "$proxy/surfaces/s0p42500/topology.npz"
-    "$proxy/surfaces/s0p48750/topology.npz"
-    "$proxy/surfaces/s0p55000/topology.npz"
-    "$proxy/surfaces/s0p80000/topology.npz"
 )
+for surface in "${surface_names[@]}"; do
+    topology_files+=("$proxy/surfaces/$surface/topology.npz")
+done
 python3 "$CODE_ROOT/evaluate_spatial_atlas.py" \
     --topology "${topology_files[@]}" \
     --classifier topology \
