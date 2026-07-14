@@ -80,13 +80,13 @@ python3 "$CODE_ROOT/evaluate_spatial_atlas.py" \
 python3 "$CODE_ROOT/evaluate_direct_loss.py" \
     --wout "$wout" \
     --wout-sha256 "$wout_sha" \
-    --out "$case_root/prompt_result" \
+    --out "$case_root/short_result" \
     --simple-executable "$DIRECT_SIMPLE_X" \
     --simple-sha256 "$DIRECT_SIMPLE_SHA256" \
     --particles "${PROMPT_PARTICLES:-128}" \
     --seed "${PROMPT_SEED:-12345}" \
     --birth-surface 0.25 \
-    --prompt-time 0.001 \
+    --prompt-time 0.0001 \
     --trace-time "${PROMPT_TRACE_TIME:-0.0011}"
 
 "$DESC_PYTHON" "$CODE_ROOT/reactor_proxy_calibration.py" desc-worker \
@@ -100,10 +100,11 @@ python3 "$CODE_ROOT/build_shell_scbo_response.py" \
     --shell "$proxy/shell.json" \
     --reference-shell "$REFERENCE_SHELL" \
     --shell-head "$SHELL_HEAD" \
-    --prompt-result "$case_root/prompt_result/result.json" \
-    --reference-prompt-times "$REFERENCE_PROMPT_TIMES" \
+    --short-result "$case_root/short_result/result.json" \
+    --reference-short-times "$REFERENCE_SHORT_TIMES" \
     --gamma-c "$gamma_c" \
     --reference-gamma-c "$REFERENCE_GAMMA_C" \
     --prompt-tolerance "${PROMPT_TOLERANCE:-0.005}" \
+    --early-tolerance "${EARLY_TOLERANCE:-0.005}" \
     --late-tolerance "${LATE_TOLERANCE:-0.0}" \
     --out "$case_root/response.json"

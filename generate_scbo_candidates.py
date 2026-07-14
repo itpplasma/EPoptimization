@@ -66,6 +66,8 @@ def generate_case(vmec, transform, anchor, request, args, output, fixed):
     case = output / name
     case.mkdir()
     record = {"candidate_id": candidate_id, "unit_x": unit.tolist(), "case": name}
+    if "generation" in request:
+        record["generation"] = int(request["generation"])
     (case / "request.json").write_text(
         json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
     )
@@ -101,7 +103,10 @@ def load_requests(path: Path, dimension: int) -> list[dict]:
             or np.any((unit < 0.0) | (unit > 1.0))
         ):
             raise ValueError("SCBO request coordinates differ from the chart")
-        requests.append({"candidate_id": candidate_id, "unit_x": unit.tolist()})
+        request = {"candidate_id": candidate_id, "unit_x": unit.tolist()}
+        if "generation" in row:
+            request["generation"] = int(row["generation"])
+        requests.append(request)
     return requests
 
 
