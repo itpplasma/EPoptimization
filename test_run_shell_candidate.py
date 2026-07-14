@@ -11,6 +11,8 @@ def test_shell_candidate_uses_fixed_shell_and_short_prompt_trace() -> None:
     assert "--birth-surface 0.25" in text
     assert "--trace-time \"${PROMPT_TRACE_TIME:-0.0011}\"" in text
     assert "--classifier topology" in text
+    assert 'test -f "$proxy/design/manifest.json"' in text
+    assert 'rm -rf "$proxy/design"' in text
     assert "--classifier jpar" not in text
     assert "escape" not in text.lower()
     assert "fractal" not in text.lower()

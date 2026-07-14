@@ -43,7 +43,8 @@ fi
 wout=$case_root/wout_${case_name}.nc
 wout_sha=$(sha256sum "$wout" | cut -d' ' -f1)
 proxy=$case_root/shell_proxy
-if ! test -d "$proxy/design"; then
+if ! test -f "$proxy/design/manifest.json"; then
+    rm -rf "$proxy/design"
     python3 "$CODE_ROOT/generate_spatial_grid.py" \
         --wout "$wout" \
         --out "$proxy/design" \
