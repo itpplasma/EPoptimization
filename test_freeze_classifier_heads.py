@@ -4,7 +4,12 @@ from freeze_classifier_heads import freeze
 
 
 def _fit(passes: bool, slope: float = 2.0) -> dict:
-    return {"passes": passes, "slope": slope, "spearman": 0.9}
+    return {
+        "passes": passes,
+        "slope": slope,
+        "spearman": 0.9,
+        "radial": {"passes": True},
+    }
 
 
 def test_freeze_selects_smallest_passing_nonfractal_heads() -> None:

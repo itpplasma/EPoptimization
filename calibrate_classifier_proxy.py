@@ -49,8 +49,10 @@ def _surface_features(path: Path) -> dict[str, np.ndarray]:
     }
 
 
-def extract_features(case: Path) -> dict[str, np.ndarray | str]:
-    paths = [case / "surfaces" / name / "topology.npz" for name in SURFACE_NAMES]
+def extract_features(
+    case: Path, surface_names: tuple[str, ...] = SURFACE_NAMES
+) -> dict[str, np.ndarray | str]:
+    paths = [case / "surfaces" / name / "topology.npz" for name in surface_names]
     if any(not path.is_file() for path in paths):
         missing = [str(path) for path in paths if not path.is_file()]
         raise ValueError(f"incomplete classifier atlas: {missing}")
@@ -117,6 +119,18 @@ def grouped_scalar_fit(
     sign_correct = np.sign(predictions[significant]) == np.sign(y[significant])
     false_safe = significant & (y > 0.0) & (predictions <= 0.0)
     false_improvement = significant & (y >= 0.0) & (predictions < 0.0)
+    resolved_pairs = []
+    correct_pairs = []
+    for left in range(len(y)):
+        for right in range(left + 1, len(y)):
+            resolution = 2.0 * np.hypot(se[left], se[right])
+            if abs(y[left] - y[right]) < resolution:
+                continue
+            resolved_pairs.append((left, right))
+            correct_pairs.append(
+                np.sign(predictions[left] - predictions[right])
+                == np.sign(y[left] - y[right])
+            )
     shift_concordant = np.all(
         (np.sign(shift_delta) == np.sign(x)[:, None]) | (shift_delta == 0.0), axis=1
     )
@@ -128,19 +142,94 @@ def grouped_scalar_fit(
         "sign_correct_fraction": float(np.mean(sign_correct)) if np.any(significant) else None,
         "false_safe_count": int(np.sum(false_safe)),
         "false_improvement_count": int(np.sum(false_improvement)),
+        "resolved_ranking_pairs": [list(pair) for pair in resolved_pairs],
+        "resolved_ranking_correct_fraction": (
+            float(np.mean(correct_pairs)) if correct_pairs else None
+        ),
         "shift_concordant": shift_concordant.tolist(),
         "passes": bool(
-            np.isfinite(correlation)
-            and correlation >= 0.70
-            and np.all(sign_correct)
+            np.all(sign_correct)
             and np.all(shift_concordant)
+            and not np.any(false_safe)
+            and (not correct_pairs or np.all(correct_pairs))
         ),
     }
 
 
-def calibrate(atlas_root: Path, reference: Path, labels: Path) -> dict:
-    label_rows, label_document = _label_rows(labels)
-    reference_features = extract_features(reference)
+def radial_convergence(levels: dict[str, np.ndarray]) -> dict:
+    order = ("coarse", "medium", "fine")
+    if any(level not in levels for level in order):
+        raise ValueError("radial convergence needs coarse, medium, and fine levels")
+    arrays = [np.asarray(levels[level], dtype=float) for level in order]
+    if any(array.shape != arrays[0].shape for array in arrays):
+        raise ValueError("radial feature arrays differ")
+    relative_changes = []
+    for left, right in zip(arrays[:-1], arrays[1:], strict=True):
+        relative_changes.append(
+            np.abs(right - left) / np.maximum(np.abs(left), 1.0e-12)
+        )
+    deltas = [array[1:] - array[0] for array in arrays]
+    sign_concordant = np.all(
+        np.stack([np.sign(delta) == np.sign(deltas[-1]) for delta in deltas]),
+        axis=0,
+    )
+    correlations = []
+    for delta in deltas[:-1]:
+        for shift in range(delta.shape[1]):
+            correlations.append(
+                float(spearmanr(delta[:, shift], deltas[-1][:, shift]).statistic)
+            )
+    return {
+        "maximum_relative_change": float(np.max(relative_changes)),
+        "ordering_spearman": correlations,
+        "sign_concordant": sign_concordant.tolist(),
+        "passes": bool(
+            np.max(relative_changes) <= 0.05
+            and np.all(sign_concordant)
+            and np.all(np.isfinite(correlations))
+            and np.min(correlations) >= 0.90
+        ),
+    }
+
+
+def _radial_levels(
+    level_surfaces: dict[str, tuple[str, ...]] | None,
+) -> dict[str, tuple[str, ...]]:
+    if level_surfaces is None:
+        level_surfaces = {
+            "coarse": ("s0p25000", "s0p30000", "s0p55000", "s0p80000"),
+            "medium": (
+                "s0p25000",
+                "s0p30000",
+                "s0p42500",
+                "s0p55000",
+                "s0p80000",
+            ),
+            "fine": SURFACE_NAMES,
+        }
+    if set(level_surfaces) != {"coarse", "medium", "fine"}:
+        raise ValueError("radial levels must be coarse, medium, and fine")
+    if any(not surfaces or surfaces[0] != "s0p25000" for surfaces in level_surfaces.values()):
+        raise ValueError("every radial level must start at birth surface s = 0.25")
+    if not (
+        set(level_surfaces["coarse"]) < set(level_surfaces["medium"])
+        and set(level_surfaces["medium"]) < set(level_surfaces["fine"])
+    ):
+        raise ValueError("radial levels must be strictly nested")
+    return level_surfaces
+
+
+def _collect_calibration(
+    atlas_root: Path,
+    reference: Path,
+    label_rows: dict[str, dict],
+    level_surfaces: dict[str, tuple[str, ...]],
+) -> tuple[list[str], dict, dict, dict]:
+    reference_by_level = {
+        level: extract_features(reference, surfaces)
+        for level, surfaces in level_surfaces.items()
+    }
+    reference_features = reference_by_level["fine"]
     cases = sorted(label_rows, key=int)
     changes: dict[str, list[np.ndarray]] = {
         name: [] for name in (*PROMPT_FEATURES, *LATE_FEATURES)
@@ -149,23 +238,62 @@ def calibrate(atlas_root: Path, reference: Path, labels: Path) -> dict:
     prompt_se = []
     late = []
     late_se = []
+    radial_values = {
+        name: {
+            level: [np.asarray(reference_by_level[level][name], dtype=float)]
+            for level in level_surfaces
+        }
+        for name in LATE_FEATURES
+    }
     for candidate in cases:
-        features = extract_features(atlas_root / f"candidate{int(candidate):03d}")
+        candidate_root = atlas_root / f"candidate{int(candidate):03d}"
+        candidate_by_level = {
+            level: extract_features(candidate_root, surfaces)
+            for level, surfaces in level_surfaces.items()
+        }
+        features = candidate_by_level["fine"]
         if features["wout_sha256"] != label_rows[candidate]["wout_sha256"]:
             raise ValueError(f"candidate {candidate} equilibrium differs from labels")
         if features["simple_sha256"] != reference_features["simple_sha256"]:
             raise ValueError(f"candidate {candidate} uses another classifier executable")
         for name in changes:
             changes[name].append(_paired_delta(features, reference_features, name))
+        for name in LATE_FEATURES:
+            for level in level_surfaces:
+                radial_values[name][level].append(
+                    np.asarray(candidate_by_level[level][name], dtype=float)
+                )
         aggregate = label_rows[candidate]["aggregate"]
         prompt.append(float(aggregate["prompt"]["change"]))
         prompt_se.append(float(aggregate["prompt"]["paired_se"]))
         late.append(float(aggregate["late"]["change"]))
         late_se.append(float(aggregate["late"]["paired_se"]))
+    labels = {
+        "prompt_change": prompt,
+        "prompt_paired_se": prompt_se,
+        "late_change": late,
+        "late_paired_se": late_se,
+    }
+    return cases, changes, radial_values, labels
+
+
+def calibrate(
+    atlas_root: Path,
+    reference: Path,
+    labels: Path,
+    level_surfaces: dict[str, tuple[str, ...]] | None = None,
+) -> dict:
+    label_rows, label_document = _label_rows(labels)
+    levels = _radial_levels(level_surfaces)
+    cases, changes, radial_values, label_values = _collect_calibration(
+        atlas_root, reference, label_rows, levels
+    )
     fits = {}
     for name, target, uncertainty in (
-        *((name, prompt, prompt_se) for name in PROMPT_FEATURES),
-        *((name, late, late_se) for name in LATE_FEATURES),
+        *((name, label_values["prompt_change"], label_values["prompt_paired_se"])
+          for name in PROMPT_FEATURES),
+        *((name, label_values["late_change"], label_values["late_paired_se"])
+          for name in LATE_FEATURES),
     ):
         shift_delta = np.asarray(changes[name])
         fits[name] = grouped_scalar_fit(
@@ -174,6 +302,13 @@ def calibrate(atlas_root: Path, reference: Path, labels: Path) -> dict:
             np.asarray(target),
             np.asarray(uncertainty),
         )
+        if name in LATE_FEATURES:
+            fits[name]["radial"] = radial_convergence(
+                {
+                    level: np.asarray(values)
+                    for level, values in radial_values[name].items()
+                }
+            )
     topology_jpar_identical = all(
         np.array_equal(changes[topology], changes[jpar])
         for topology, jpar in (
@@ -186,16 +321,14 @@ def calibrate(atlas_root: Path, reference: Path, labels: Path) -> dict:
         "schema_name": "alpha-loss.classifier-proxy-calibration",
         "schema_version": 1,
         "birth_surface": label_document["birth_surface"],
+        "radial_levels": {
+            level: list(surfaces) for level, surfaces in levels.items()
+        },
         "cases": cases,
         "features": {
             name: np.asarray(values).tolist() for name, values in changes.items()
         },
-        "labels": {
-            "prompt_change": prompt,
-            "prompt_paired_se": prompt_se,
-            "late_change": late,
-            "late_paired_se": late_se,
-        },
+        "labels": label_values,
         "fits": fits,
         "topology_jpar_identical": topology_jpar_identical,
         "fractal_features": [],
@@ -232,6 +365,7 @@ def parser() -> argparse.ArgumentParser:
     calibration.add_argument("--atlas-root", type=Path, required=True)
     calibration.add_argument("--reference", type=Path, required=True)
     calibration.add_argument("--labels", type=Path, required=True)
+    calibration.add_argument("--radial-levels", type=Path)
     calibration.add_argument("--out", type=Path, required=True)
     prediction = commands.add_parser("predict")
     prediction.add_argument("--frozen-heads", type=Path, required=True)
@@ -244,8 +378,18 @@ def parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = parser().parse_args()
     if args.command == "fit":
+        level_surfaces = None
+        if args.radial_levels:
+            document = json.loads(args.radial_levels.read_text())
+            level_surfaces = {
+                level: tuple(str(surface) for surface in surfaces)
+                for level, surfaces in document.items()
+            }
         result = calibrate(
-            args.atlas_root.resolve(), args.reference.resolve(), args.labels.resolve()
+            args.atlas_root.resolve(),
+            args.reference.resolve(),
+            args.labels.resolve(),
+            level_surfaces,
         )
     else:
         frozen = json.loads(args.frozen_heads.read_text())

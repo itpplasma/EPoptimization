@@ -19,10 +19,13 @@ LATE_ORDER = (
 )
 
 
-def _select(fits: dict, order: tuple[str, ...], target: str) -> dict:
+def _select(
+    fits: dict, order: tuple[str, ...], target: str, require_radial: bool = False
+) -> dict:
     for name in order:
         result = fits[name]
-        if result["passes"]:
+        radial_passes = not require_radial or result.get("radial", {}).get("passes")
+        if result["passes"] and radial_passes:
             return {
                 "feature": name,
                 "slope": float(result["slope"]),
@@ -36,7 +39,7 @@ def freeze(calibration: dict) -> dict:
         raise ValueError("fractal features are forbidden")
     fits = calibration["fits"]
     prompt = _select(fits, PROMPT_ORDER, "prompt")
-    late = _select(fits, LATE_ORDER, "late")
+    late = _select(fits, LATE_ORDER, "late", require_radial=True)
     return {
         "schema_name": "alpha-loss.frozen-classifier-heads",
         "schema_version": 1,
@@ -48,7 +51,7 @@ def freeze(calibration: dict) -> dict:
         "fractal_features": [],
         "heldout_status": "pending",
         "horizon_status": "pending",
-        "radial_status": "pending",
+        "radial_status": "passed",
         "angular_status": "pending",
     }
 
