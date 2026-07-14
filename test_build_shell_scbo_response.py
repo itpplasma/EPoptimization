@@ -80,8 +80,8 @@ def test_shell_response_preserves_unit_weighted_total_and_three_objectives() -> 
     observation = response["observation"]
     assert np.isclose(observation["value"], -0.05)
     assert np.isclose(observation["variance"], 0.025**2)
-    np.testing.assert_allclose(observation["constraints"], [0.0])
-    assert response["metrics"]["scalar_constraint_names"] == ["gamma_c_s03"]
+    np.testing.assert_allclose(observation["constraints"], [-1.0])
+    assert response["metrics"]["scalar_constraint_names"] == ["always_feasible"]
     assert not response["metrics"]["loss_component_limits_enforced"]
     np.testing.assert_allclose(
         response["pareto_observation"]["values"], [0.01, -0.02, -0.04]
@@ -106,7 +106,8 @@ def test_shell_response_allows_loss_window_tradeoffs_in_scalar_search() -> None:
     )
 
     assert np.isclose(response["observation"]["value"], 0.01)
-    assert response["observation"]["constraints"] == [-0.001]
+    assert response["observation"]["constraints"] == [-1.0]
+    assert response["metrics"]["gamma_c_s03"] == 0.003
 
 
 def test_shell_response_uses_short_covariance_for_scalar_variance() -> None:

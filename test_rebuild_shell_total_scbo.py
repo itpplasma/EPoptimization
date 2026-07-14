@@ -31,12 +31,12 @@ def response(candidate_id, constraints=None):
     }
 
 
-def test_total_loss_row_keeps_value_and_only_gamma_guard():
+def test_total_loss_row_keeps_value_without_physical_proxy_guard():
     row = total_loss_row(response(2, [-0.1, 0.2, -0.3, 0.4, -0.004]))
     assert row["observation"] == {
         "value": -0.03,
         "variance": 0.002,
-        "constraints": [-0.004],
+        "constraints": [-1.0],
         "constraint_variances": [0.0],
     }
 

@@ -11,14 +11,11 @@ def total_loss_row(response: dict) -> dict:
     observation = response.get("observation")
     if observation is None:
         return row
-    guard = response.get("pareto_observation")
-    if guard is None or len(guard["constraints"]) != 1:
-        raise ValueError("shell response must contain the Gamma-c guard")
     row["observation"] = {
         "value": float(observation["value"]),
         "variance": float(observation["variance"]),
-        "constraints": [float(guard["constraints"][0])],
-        "constraint_variances": [float(guard["constraint_variances"][0])],
+        "constraints": [-1.0],
+        "constraint_variances": [0.0],
     }
     return row
 

@@ -131,8 +131,8 @@ def successful_response(
     short_variance = float(direct["short"]["paired_se"]) ** 2
     predicted_total = prompt_mean + early_mean + late_mean
     gamma_limit = max(1.5 * reference_gamma_c, reference_gamma_c + 0.002)
-    scalar_constraints = [float(gamma_c - gamma_limit)]
-    scalar_names = ["gamma_c_s03"]
+    scalar_constraints = [-1.0]
+    scalar_names = ["always_feasible"]
     response = base_response(request, "ok", None)
     response["observation"] = {
         "value": predicted_total,
@@ -147,12 +147,12 @@ def successful_response(
             float(direct["early"]["paired_se"]) ** 2,
             late_variance,
         ],
-        "constraints": [float(gamma_c - gamma_limit)],
+        "constraints": [-1.0],
         "constraint_variances": [0.0],
     }
     response["metrics"] = {
         "scalar_constraint_names": scalar_names,
-        "pareto_constraint_names": ["gamma_c_s03"],
+        "pareto_constraint_names": ["always_feasible"],
         "pareto_objective_names": [
             "prompt_0_0p1ms_change",
             "early_0p1_1ms_change",
