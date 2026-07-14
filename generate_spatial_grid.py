@@ -15,6 +15,8 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--ntheta", type=int, default=16)
     root.add_argument("--nzeta", type=int, default=16)
     root.add_argument("--nmu", type=int, default=9)
+    root.add_argument("--rz-scale", type=float)
+    root.add_argument("--b-scale", type=float)
     return root
 
 
@@ -27,4 +29,6 @@ if __name__ == "__main__":
         ntheta=args.ntheta,
         nzeta=args.nzeta,
         nmu=args.nmu,
+        rz_scale=args.rz_scale,
+        b_scale=args.b_scale,
     )

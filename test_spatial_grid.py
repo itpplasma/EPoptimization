@@ -3,11 +3,14 @@ from pathlib import Path
 
 import simple_barrier
 from spatial_grid import (
+    ChartMap,
+    _periodic_sample,
     angular_grid,
     calibrate_fixed_invariant,
     fourier_field,
     pitch_quantile_lambdas,
     spatial_classify_namelist,
+    write_compatible_chartmap,
 )
 
 
@@ -53,6 +56,59 @@ def test_spatial_classifier_preserves_toroidal_launch_position(monkeypatch) -> N
     assert "class_plot = .False." in text
     assert "trace_time = 0.02" in text
     assert "tcut = -1d0" in text
+
+
+def test_spatial_classifier_uses_explicit_chartmap_scales(monkeypatch) -> None:
+    monkeypatch.setattr(
+        simple_barrier,
+        "reactor_scale",
+        lambda _: (_ for _ in ()).throw(AssertionError("must not inspect chartmap")),
+    )
+    text = spatial_classify_namelist(
+        particle_count=64,
+        surface=0.55,
+        wout=Path("chartmap.nc"),
+        trace_time=0.02,
+        rz_scale=10.0,
+        b_scale=6.0,
+    )
+    assert "vmec_RZ_scale = 10" in text
+    assert "vmec_B_scale = 6" in text
+
+
+def test_chartmap_sampling_is_radial_linear_and_angular_periodic() -> None:
+    rho = np.array([0.25, 0.75])
+    theta = 2.0 * np.pi * np.arange(4) / 4
+    zeta = np.pi * np.arange(6) / 6
+    radial, poloidal, toroidal = np.meshgrid(rho, theta, zeta, indexing="ij")
+    values = radial + np.cos(poloidal) + 2.0 * np.cos(2.0 * toroidal)
+    stored = np.transpose(values, (2, 1, 0))
+    chartmap = ChartMap(
+        rho=rho,
+        theta=theta,
+        zeta=zeta,
+        xyz=np.zeros((3, len(zeta), len(theta), len(rho))),
+        bmod=stored,
+        nfp=2,
+    )
+    query_theta = np.array([[0.0, 2.0 * np.pi]])
+    query_zeta = np.array([[0.0, np.pi]])
+    sampled = _periodic_sample(
+        stored, chartmap, 0.25, query_theta, query_zeta
+    )
+    np.testing.assert_allclose(sampled, 3.5)
+
+
+def test_modern_chartmap_copy_preserves_bytes(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.nc"
+    output = tmp_path / "output.nc"
+    source.write_bytes(b"exact modern chartmap")
+    monkeypatch.setattr(
+        "spatial_grid._reference_chartmap",
+        lambda _: __import__("contextlib").nullcontext(source),
+    )
+    write_compatible_chartmap(source, output)
+    assert output.read_bytes() == source.read_bytes()
 
 
 def test_invariant_calibration_uses_pinned_executable_field() -> None:

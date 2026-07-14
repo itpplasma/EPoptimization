@@ -2,7 +2,11 @@ from pathlib import Path
 
 import numpy as np
 
-from spatial_atlas import load_spatial_atlas, score_spatial_atlas
+from spatial_atlas import (
+    fixed_shell_nonideal_volumes,
+    load_spatial_atlas,
+    score_spatial_atlas,
+)
 
 
 def _write_surface(path: Path, surface: float, hole: slice) -> Path:
@@ -52,3 +56,26 @@ def test_misaligned_middle_surface_closes_channel(tmp_path: Path) -> None:
     ]
     result = score_spatial_atlas(load_spatial_atlas(paths), sigma_cells=0.5)
     assert result.score == 0.0
+
+
+def test_fixed_shell_integrates_only_the_declared_outer_band(tmp_path: Path) -> None:
+    birth = _write_surface(tmp_path / "birth.npz", 0.25, slice(0, 8))
+    inner = _write_surface(tmp_path / "inner.npz", 0.675, slice(1, 3))
+    outer = _write_surface(tmp_path / "outer.npz", 0.8, slice(1, 5))
+    atlas = load_spatial_atlas([outer, birth, inner])
+
+    result = fixed_shell_nonideal_volumes(atlas, "topology", 0.675, 0.8)
+
+    np.testing.assert_allclose(result, 9.0 / 64.0)
+
+
+def test_fixed_shell_requires_both_boundaries(tmp_path: Path) -> None:
+    paths = [
+        _write_surface(tmp_path / "birth.npz", 0.25, slice(0, 8)),
+        _write_surface(tmp_path / "outer.npz", 0.8, slice(1, 5)),
+    ]
+
+    with np.testing.assert_raises_regex(ValueError, "both fixed shell boundaries"):
+        fixed_shell_nonideal_volumes(
+            load_spatial_atlas(paths), "topology", 0.675, 0.8
+        )

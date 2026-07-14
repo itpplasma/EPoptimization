@@ -30,12 +30,16 @@ def test_evolution_rotates_close_adaptive_surface_ticks(tmp_path, monkeypatch) -
         np.savez_compressed(
             path,
             topology=topology,
+            jpar=topology,
             particle_index=np.zeros_like(topology),
             weights=np.ones((1, 3, 3)) / 9.0,
             lambda_values=np.array([0.75]),
             shifts=np.array([0.0]),
             signs=np.array([1.0, -1.0]),
             surface=np.array(surface),
+            simple_sha256=np.array("simple"),
+            wout_sha256=np.array("wout"),
+            trace_time=np.array(0.02),
         )
         topology_files.append(path)
     rotations = []

@@ -89,6 +89,39 @@ def load_spatial_atlas(paths: list[Path]) -> dict[str, np.ndarray]:
     }
 
 
+def fixed_shell_nonideal_volumes(
+    atlas: dict[str, np.ndarray],
+    classifier: str,
+    inner: float,
+    outer: float,
+) -> np.ndarray:
+    if classifier not in ("topology", "jpar"):
+        raise ValueError("classifier must be topology or jpar")
+    if not 0.0 < inner < outer < 1.0:
+        raise ValueError("shell bounds must satisfy 0 < inner < outer < 1")
+    surfaces = np.asarray(atlas["surfaces"], dtype=float)
+    selected = (surfaces >= inner - 1.0e-12) & (surfaces <= outer + 1.0e-12)
+    radial = surfaces[selected]
+    if (
+        len(radial) < 2
+        or not np.isclose(radial[0], inner, rtol=0.0, atol=1.0e-12)
+        or not np.isclose(radial[-1], outer, rtol=0.0, atol=1.0e-12)
+    ):
+        raise ValueError("atlas does not contain both fixed shell boundaries")
+    values = atlas[classifier][selected]
+    weights = atlas["weights"][selected, None, None]
+    numerator = np.sum(weights * (values == 2), axis=(-2, -1))
+    denominator = np.sum(weights, axis=(-2, -1))
+    fractions = np.divide(
+        numerator,
+        denominator,
+        out=np.zeros_like(numerator, dtype=float),
+        where=denominator > 0.0,
+    )
+    integrated = np.trapezoid(fractions, radial, axis=0) / (outer - inner)
+    return np.mean(integrated, axis=(0, 1))
+
+
 def _refinement_changes(risk: np.ndarray, weights: np.ndarray) -> np.ndarray:
     mean_risk = np.mean(risk, axis=(1, 2))
     changes = np.zeros(risk.shape[0] - 1)
