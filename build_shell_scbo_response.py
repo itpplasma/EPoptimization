@@ -131,29 +131,14 @@ def successful_response(
     short_variance = float(direct["short"]["paired_se"]) ** 2
     predicted_total = prompt_mean + early_mean + late_mean
     gamma_limit = max(1.5 * reference_gamma_c, reference_gamma_c + 0.002)
-    scalar_constraints = [
-        *(late - late_tolerance).tolist(),
-        prompt_mean - prompt_tolerance,
-        early_mean - early_tolerance,
-        float(gamma_c - gamma_limit),
-    ]
-    scalar_names = [
-        *(f"late_shell_prediction_shift_{index}" for index in range(len(late))),
-        "prompt_loss_change",
-        "early_loss_change",
-        "gamma_c_s03",
-    ]
+    scalar_constraints = [float(gamma_c - gamma_limit)]
+    scalar_names = ["gamma_c_s03"]
     response = base_response(request, "ok", None)
     response["observation"] = {
         "value": predicted_total,
         "variance": short_variance + late_variance,
         "constraints": scalar_constraints,
-        "constraint_variances": [
-            *([0.0] * len(late)),
-            float(direct["prompt"]["paired_se"]) ** 2,
-            float(direct["early"]["paired_se"]) ** 2,
-            0.0,
-        ],
+        "constraint_variances": [0.0],
     }
     response["pareto_observation"] = {
         "values": [prompt_mean, early_mean, late_mean],
@@ -179,6 +164,7 @@ def successful_response(
         "late_feature": shell_head["feature"],
         "late_predictions": late.tolist(),
         "late_tolerance": late_tolerance,
+        "loss_component_limits_enforced": False,
         "prompt_change": prompt_mean,
         "prompt_paired_se": float(direct["prompt"]["paired_se"]),
         "prompt_tolerance": prompt_tolerance,
