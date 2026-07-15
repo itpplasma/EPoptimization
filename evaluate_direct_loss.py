@@ -6,8 +6,8 @@ import json
 import shutil
 from pathlib import Path
 
-import simple_barrier
-from evaluate_barrier_proxy import write_execution_record
+import simple_direct
+from execution_record import write_execution_record
 
 
 def evaluate(args: argparse.Namespace) -> None:
@@ -18,16 +18,16 @@ def evaluate(args: argparse.Namespace) -> None:
     if not 0.0 < args.prompt_time < args.trace_time:
         raise ValueError("loss windows must satisfy 0 < prompt < trace")
     executable = args.simple_executable.resolve()
-    executable_hash = simple_barrier.file_sha256(executable)
+    executable_hash = simple_direct.file_sha256(executable)
     if executable_hash != args.simple_sha256:
         raise ValueError(f"unexpected SIMPLE executable hash {executable_hash}")
     wout = args.wout.resolve()
-    wout_hash = simple_barrier.file_sha256(wout)
+    wout_hash = simple_direct.file_sha256(wout)
     if wout_hash != args.wout_sha256:
         raise ValueError(f"unexpected equilibrium hash {wout_hash}")
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    metrics = simple_barrier.direct_loss_metrics(
+    metrics = simple_direct.direct_loss_metrics(
         wout,
         ntestpart=args.particles,
         expected_simple_sha256=executable_hash,
@@ -66,12 +66,12 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--simple-executable", type=Path, required=True)
     root.add_argument("--simple-sha256", required=True)
     root.add_argument("--wout-sha256", required=True)
-    root.add_argument("--particles", type=int, default=1024)
+    root.add_argument("--particles", type=int, default=256)
     root.add_argument("--seed", type=int, default=12345)
-    root.add_argument("--birth-surface", type=float, default=0.3)
+    root.add_argument("--birth-surface", type=float, default=0.25)
     root.add_argument("--prompt-time", type=float, default=1.0e-3)
-    root.add_argument("--trace-time", type=float, default=3.0e-1)
-    root.add_argument("--timeout", type=float, default=86400.0)
+    root.add_argument("--trace-time", type=float, default=1.0e-1)
+    root.add_argument("--timeout", type=float, default=900.0)
     return root
 
 
