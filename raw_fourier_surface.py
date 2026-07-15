@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 
 import numpy as np
+from scipy import optimize
 
-from data_informed_surface import _enforce_radii
 from generate_vmec_audit_inputs import file_sha256, normalize_vmec_input
 
 _MODE = re.compile(r"(?:.*:)?(rc|zs)\((\d+),(-?\d+)\)$")
@@ -110,3 +110,17 @@ def _mode_scale(name: str) -> float:
     m = int(match.group(2))
     n = int(match.group(3))
     return 0.05 / (1.0 + m + abs(n))
+
+
+def _enforce_radii(surface, major_radius: float, minor_radius: float) -> None:
+    target_aspect = major_radius / minor_radius
+
+    def residual(value):
+        dofs = surface.x.copy()
+        dofs[0] = value
+        surface.x = dofs
+        return surface.aspect_ratio() - target_aspect
+
+    root = optimize.newton(residual, x0=major_radius)
+    residual(root)
+    surface.x = surface.x * (minor_radius / surface.minor_radius())
