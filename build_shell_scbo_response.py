@@ -65,7 +65,10 @@ def paired_direct_changes(
     reference = taxonomy_indicators(reference_times, prompt_end, early_end)
     candidate = taxonomy_indicators(candidate_times, prompt_end, early_end)
     particles = int(result["direct"]["particles"])
-    if any(len(values) != particles for values in (*reference.values(), *candidate.values())):
+    if any(
+        len(values) != particles
+        for values in (*reference.values(), *candidate.values())
+    ):
         raise ValueError("candidate and reference short particle counts differ")
     return {
         name: paired_summary(reference[name], candidate[name])
@@ -93,7 +96,7 @@ def paired_shell_change(candidate: dict, reference: dict, slope: float) -> np.nd
     return slope * (left - right)
 
 
-def validate_head(shell_head: dict) -> float:
+def validate_head(shell_head: dict) -> dict[str, float]:
     if shell_head.get("feature") != "topology_fixed_outer_shell_volume":
         raise ValueError("frozen late head is not the fixed outer shell volume")
     if shell_head.get("status") != "passed":
@@ -103,7 +106,19 @@ def validate_head(shell_head: dict) -> float:
     slope = float(shell_head["slope"])
     if not np.isfinite(slope) or slope <= 0.0:
         raise ValueError("fixed outer shell slope must be positive")
-    return slope
+    proxy_reference = float(shell_head["proxy_reference"])
+    proxy_floor = float(shell_head["proxy_floor"])
+    late_reference = float(shell_head["late_reference"])
+    if not 0.0 < proxy_floor < proxy_reference < 1.0:
+        raise ValueError("fixed outer shell floor must be below the reference")
+    if not 0.0 < late_reference < 1.0:
+        raise ValueError("late reference loss must be a probability")
+    return {
+        "slope": slope,
+        "proxy_reference": proxy_reference,
+        "proxy_floor": proxy_floor,
+        "late_reference": late_reference,
+    }
 
 
 def successful_response(
@@ -118,12 +133,23 @@ def successful_response(
     early_tolerance: float,
     late_tolerance: float,
 ) -> dict:
-    slope = validate_head(shell_head)
+    calibration = validate_head(shell_head)
     if min(prompt_tolerance, early_tolerance, late_tolerance) < 0.0:
         raise ValueError("loss tolerances must be nonnegative")
     if not np.isfinite(gamma_c) or not np.isfinite(reference_gamma_c):
         raise ValueError("Gamma-c values must be finite")
-    late = paired_shell_change(shell, reference_shell, slope)
+    raw_shell_change = paired_shell_change(shell, reference_shell, 1.0)
+    reference_proxy = float(np.mean(reference_shell["shift_shell_nonideal_volumes"]))
+    if not np.isclose(
+        reference_proxy, calibration["proxy_reference"], rtol=0.0, atol=1.0e-12
+    ):
+        raise ValueError("reference shell differs from the calibrated proxy reference")
+    absolute_proxy = reference_proxy + float(np.mean(raw_shell_change))
+    floor_active = absolute_proxy <= calibration["proxy_floor"]
+    if floor_active:
+        late = np.full_like(raw_shell_change, -calibration["late_reference"])
+    else:
+        late = calibration["slope"] * raw_shell_change
     late_mean = float(np.mean(late))
     late_variance = float(np.var(late, ddof=1) / len(late))
     prompt_mean = float(direct["prompt"]["change"])
@@ -162,6 +188,12 @@ def successful_response(
         "early_end": EARLY_END,
         "late_target_end": 0.1,
         "late_feature": shell_head["feature"],
+        "late_slope": calibration["slope"],
+        "late_proxy_absolute": absolute_proxy,
+        "late_proxy_reference": calibration["proxy_reference"],
+        "late_calibration_floor": calibration["proxy_floor"],
+        "late_reference_fraction": calibration["late_reference"],
+        "late_floor_active": floor_active,
         "late_predictions": late.tolist(),
         "late_tolerance": late_tolerance,
         "loss_component_limits_enforced": False,

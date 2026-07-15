@@ -109,3 +109,14 @@ python3 "$CODE_ROOT/build_shell_scbo_response.py" \
     --early-tolerance "${EARLY_TOLERANCE:-0.005}" \
     --late-tolerance "${LATE_TOLERANCE:-0.0}" \
     --out "$case_root/response.json"
+
+if test "${INCREMENTAL_VALIDATION_SUBMIT:-0}" = 1; then
+    : "${INCREMENTAL_VALIDATION_SCRIPT:?}"
+    if ! test -f "$case_root/validation.job.id"; then
+        validation_job=$(sbatch --parsable --array=0-3%4 \
+            --export="ALL,CANDIDATE_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"candidate_id\"])' "$case_root/request.json"),CANDIDATE_ROOT=$case_root,WOUT_NAME=$(basename "$wout"),WOUT_SHA=$wout_sha" \
+            "$INCREMENTAL_VALIDATION_SCRIPT")
+        validation_job=${validation_job%%;*}
+        printf '%s\n' "$validation_job" > "$case_root/validation.job.id"
+    fi
+fi

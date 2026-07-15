@@ -39,6 +39,9 @@ def head():
     return {
         "feature": "topology_fixed_outer_shell_volume",
         "slope": 2.0,
+        "proxy_reference": 0.095,
+        "proxy_floor": 0.05,
+        "late_reference": 0.1,
         "status": "passed",
         "target": "loss_1_100ms",
     }
@@ -59,7 +62,9 @@ def test_taxonomy_assigns_exact_boundaries_to_later_windows(tmp_path: Path) -> N
     windows = taxonomy_indicators(path)
     np.testing.assert_array_equal(windows["prompt"], [False, True, False, False, False])
     np.testing.assert_array_equal(windows["early"], [False, False, True, True, False])
-    np.testing.assert_array_equal(windows["short"], windows["prompt"] | windows["early"])
+    np.testing.assert_array_equal(
+        windows["short"], windows["prompt"] | windows["early"]
+    )
 
 
 def test_shell_response_preserves_unit_weighted_total_and_three_objectives() -> None:
@@ -88,6 +93,32 @@ def test_shell_response_preserves_unit_weighted_total_and_three_objectives() -> 
     )
     assert response["generation"] == 2
     assert response["metrics"]["predicted_total_change"] == observation["value"]
+    assert not response["metrics"]["late_floor_active"]
+
+
+def test_shell_response_caps_late_loss_at_calibration_floor() -> None:
+    shell, reference = shells()
+    shell["shift_shell_nonideal_volumes"] = [0.04, 0.04]
+    response = successful_response(
+        {"candidate_id": 9, "unit_x": [0.2, 0.8]},
+        shell,
+        reference,
+        head(),
+        direct(prompt=0.0, early=0.0),
+        0.004,
+        0.002,
+        0.005,
+        0.005,
+        0.0,
+    )
+
+    assert response["metrics"]["late_floor_active"]
+    np.testing.assert_allclose(response["metrics"]["late_predictions"], [-0.1, -0.1])
+    assert response["observation"]["value"] == -0.1
+    assert (
+        response["observation"]["variance"]
+        == direct(0.0, 0.0)["short"]["paired_se"] ** 2
+    )
 
 
 def test_shell_response_allows_loss_window_tradeoffs_in_scalar_search() -> None:
@@ -125,9 +156,7 @@ def test_shell_response_uses_short_covariance_for_scalar_variance() -> None:
         0.1,
     )
     assert np.isclose(response["observation"]["variance"], 0.025**2)
-    assert not np.isclose(
-        response["observation"]["variance"], 0.02**2 + 0.03**2
-    )
+    assert not np.isclose(response["observation"]["variance"], 0.02**2 + 0.03**2)
 
 
 def test_shell_response_rejects_superseded_head() -> None:
