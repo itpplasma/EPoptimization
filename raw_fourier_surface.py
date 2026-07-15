@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 
 import numpy as np
 from scipy import optimize
-
-from generate_vmec_audit_inputs import file_sha256, normalize_vmec_input
 
 _MODE = re.compile(r"(?:.*:)?(rc|zs)\((\d+),(-?\d+)\)$")
 
@@ -124,3 +123,16 @@ def _enforce_radii(surface, major_radius: float, minor_radius: float) -> None:
     root = optimize.newton(residual, x0=major_radius)
     residual(root)
     surface.x = surface.x * (minor_radius / surface.minor_radius())
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def normalize_vmec_input(path: Path) -> None:
+    lines = [line.rstrip() for line in Path(path).read_text().splitlines()]
+    Path(path).write_text("\n".join(lines).rstrip() + "\n")
