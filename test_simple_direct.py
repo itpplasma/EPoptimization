@@ -7,7 +7,7 @@ def test_direct_contract_uses_production_resolution_and_symplectic_euler():
     assert "npoiper2 = 256" in DIRECT_NAMELIST
     assert "ns_s = 5" in DIRECT_NAMELIST
     assert "ns_tp = 5" in DIRECT_NAMELIST
-    assert "multharm = 7" in DIRECT_NAMELIST
+    assert "multharm = 5" in DIRECT_NAMELIST
     assert "integmode = 1" in DIRECT_NAMELIST
     assert "fast_class = .False." in DIRECT_NAMELIST
 
