@@ -16,3 +16,10 @@ def test_shell_candidate_uses_fixed_shell_and_short_prompt_trace() -> None:
     assert "--classifier jpar" not in text
     assert "escape" not in text.lower()
     assert "fractal" not in text.lower()
+
+
+def test_incremental_validation_metadata_uses_script_arguments() -> None:
+    text = Path("run_shell_candidate.sh").read_text()
+
+    assert '"$candidate_id" "$case_root" "$(basename "$wout")" "$wout_sha"' in text
+    assert '--export="ALL,CANDIDATE_ID=' not in text

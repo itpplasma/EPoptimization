@@ -113,9 +113,10 @@ python3 "$CODE_ROOT/build_shell_scbo_response.py" \
 if test "${INCREMENTAL_VALIDATION_SUBMIT:-0}" = 1; then
     : "${INCREMENTAL_VALIDATION_SCRIPT:?}"
     if ! test -f "$case_root/validation.job.id"; then
+        candidate_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["candidate_id"])' "$case_root/request.json")
         validation_job=$(sbatch --parsable --array=0-3%4 \
-            --export="ALL,CANDIDATE_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"candidate_id\"])' "$case_root/request.json"),CANDIDATE_ROOT=$case_root,WOUT_NAME=$(basename "$wout"),WOUT_SHA=$wout_sha" \
-            "$INCREMENTAL_VALIDATION_SCRIPT")
+            "$INCREMENTAL_VALIDATION_SCRIPT" \
+            "$candidate_id" "$case_root" "$(basename "$wout")" "$wout_sha")
         validation_job=${validation_job%%;*}
         printf '%s\n' "$validation_job" > "$case_root/validation.job.id"
     fi
