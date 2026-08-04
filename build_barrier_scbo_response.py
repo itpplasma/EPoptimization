@@ -27,11 +27,35 @@ def base_response(request: dict, status: str, failure_kind: str | None) -> dict:
     }
 
 
+#: Objective names. "discrete" is the classifier-counting metric; the smooth
+#: variants replace every indicator with a mollified weight and are the ones a
+#: differentiation tool could act on.
+OBJECTIVES = ("discrete", "smooth-jpar", "smooth-topology")
+
+
+def select_objective(barrier: dict, objective: str) -> float:
+    if objective == "discrete":
+        return barrier["barrier_overlap"]
+    if objective not in OBJECTIVES:
+        raise ValueError(f"unknown objective {objective}")
+    smooth = barrier.get("smooth") or {}
+    if not smooth.get("available"):
+        raise ValueError(
+            f"objective {objective} needs class_scores.dat; the SIMPLE build "
+            "must carry the continuous classifier margins"
+        )
+    key = "smooth_barrier_overlap_" + objective.removeprefix("smooth-")
+    if key not in smooth:
+        raise ValueError(f"barrier result carries no {key}")
+    return smooth[key]
+
+
 def successful_response(
     request: dict,
     result: dict,
     geometry: dict,
     *,
+    objective: str,
     inner_surface: float,
     outer_surface: float,
     particles_per_surface: int,
@@ -54,9 +78,9 @@ def successful_response(
         if key not in barrier or not np.isclose(barrier[key], value):
             raise ValueError(f"barrier result has unexpected {key}")
 
-    overlap = float(barrier["barrier_overlap"])
+    overlap = float(select_objective(barrier, objective))
     if not np.isfinite(overlap):
-        raise ValueError("barrier overlap is not finite")
+        raise ValueError(f"objective {objective} is not finite")
     if barrier["trapped_inner"] <= 0 or barrier["trapped_outer"] <= 0:
         raise ValueError("barrier surfaces carry no trapped particles")
 
@@ -76,9 +100,11 @@ def successful_response(
     }
     response["metrics"] = {
         "objective_name": (
-            f"barrier_overlap_{barrier['classifier']}"
+            f"{objective}_barrier_overlap_{barrier['classifier']}"
             f"_s{inner_surface:g}_to_s{outer_surface:g}"
         ),
+        "objective_kind": objective,
+        "discrete_barrier_overlap": barrier["barrier_overlap"],
         "constraint_names": list(geometry["constraint_names"]) + ["prompt_loss"],
         "constraint_limits": list(geometry["constraint_limits"]) + [prompt_limit],
         "barrier": barrier,
@@ -100,6 +126,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--outer-surface", type=float, default=0.6)
     root.add_argument("--particles-per-surface", type=int, default=1024)
     root.add_argument("--prompt-limit", type=float, default=0.05)
+    root.add_argument("--objective", choices=OBJECTIVES, default="discrete")
     return root
 
 
@@ -115,6 +142,7 @@ def main() -> None:
             request,
             json.loads(args.result.read_text()),
             json.loads(args.geometry.read_text()),
+            objective=args.objective,
             inner_surface=args.inner_surface,
             outer_surface=args.outer_surface,
             particles_per_surface=args.particles_per_surface,

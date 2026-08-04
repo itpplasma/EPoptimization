@@ -393,6 +393,7 @@ def barrier_metrics(
     nturns: int,
     seed: int,
     classifier: str = "topology",
+    smooth_widths: dict | None = None,
     simple_executable: str | os.PathLike | None = None,
     keep_workdir: bool = False,
     timeout_s: float = 3600.0,
@@ -437,12 +438,16 @@ def barrier_metrics(
         inner = load_classification(runs["inner"], column)
         outer = load_classification(runs["outer"], column)
         overlap = barrier_overlap_samples(*inner, *outer, edges=edges)
+        smooth = _smooth_metrics(
+            runs, inner[0], outer[0], edges=edges, widths=smooth_widths
+        )
         losses = classification_loss_metrics(
             runs["inner"], prompt_time=prompt_time, trace_time=trace_time
         )
         return {
             "barrier_overlap": overlap,
             "classifier": classifier,
+            "smooth": smooth,
             "prompt_loss_inner": losses["prompt_loss"],
             "short_loss_inner": losses["total_loss"],
             "loss_metrics_inner": losses,
@@ -470,6 +475,58 @@ def barrier_metrics(
     finally:
         if not keep_workdir:
             shutil.rmtree(base, ignore_errors=True)
+
+
+#: Default mollifier widths. The chaos width is relative to tol_perpinv, the
+#: trapped width to the trapping parameter, and the bin width to the mu range.
+DEFAULT_SMOOTH_WIDTHS = {"chaos": 0.25, "trapped": 0.15, "bin": 0.05}
+
+
+def _smooth_metrics(
+    runs: dict,
+    mu_inner: np.ndarray,
+    mu_outer: np.ndarray,
+    *,
+    edges: np.ndarray,
+    widths: dict | None,
+) -> dict:
+    """Smooth overlaps alongside the discrete one, when scores are available.
+
+    ``class_scores.dat`` needs SIMPLE with itpplasma/SIMPLE#513. Without it the
+    discrete metric still works, so a missing file is reported rather than
+    raised: a campaign should not die because the smooth variant is absent.
+    """
+    from smooth_barrier import TOL_PERPINV, load_class_scores, smooth_barrier_overlap
+
+    settings = dict(DEFAULT_SMOOTH_WIDTHS)
+    if widths:
+        settings.update(widths)
+    try:
+        inner = load_class_scores(runs["inner"])
+        outer = load_class_scores(runs["outer"])
+    except (FileNotFoundError, OSError):
+        return {"available": False}
+
+    span = float(edges[-1] - edges[0])
+    values = {}
+    for name in ("jpar", "topology"):
+        values[name] = smooth_barrier_overlap(
+            inner,
+            outer,
+            mu_inner=mu_inner,
+            mu_outer=mu_outer,
+            edges=edges,
+            classifier=name,
+            chaos_width=settings["chaos"] * TOL_PERPINV,
+            trapped_width=settings["trapped"],
+            bin_width=settings["bin"] * span,
+        )
+    return {
+        "available": True,
+        "widths": settings,
+        "smooth_barrier_overlap_jpar": values["jpar"],
+        "smooth_barrier_overlap_topology": values["topology"],
+    }
 
 
 def _chaotic_fraction(sample: tuple[np.ndarray, np.ndarray, np.ndarray]) -> float:

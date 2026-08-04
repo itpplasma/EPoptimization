@@ -66,6 +66,9 @@ python3 "$CODE_ROOT/evaluate_barrier_overlap.py" \
     --nturns "${NTURNS:-8}" \
     --seed "${PARTICLE_SEED:-12345}" \
     --classifier "${CLASSIFIER:-topology}" \
+    --smooth-chaos-width "${SMOOTH_CHAOS_WIDTH:-0.25}" \
+    --smooth-trapped-width "${SMOOTH_TRAPPED_WIDTH:-0.15}" \
+    --smooth-bin-width "${SMOOTH_BIN_WIDTH:-0.05}" \
     --timeout "${SIMPLE_TIMEOUT_SECONDS:-3600}"
 
 failure_kind=response_failure
@@ -77,5 +80,6 @@ python3 "$CODE_ROOT/build_barrier_scbo_response.py" \
     --outer-surface "${OUTER_SURFACE:-0.6}" \
     --particles-per-surface "$(( ${NTHETA:-8} * ${NZETA:-8} * ${NPITCH:-16} ))" \
     --prompt-limit "${PROMPT_LIMIT:-0.05}" \
+    --objective "${OBJECTIVE:-discrete}" \
     --out "$case_root/response.json"
 trap - ERR

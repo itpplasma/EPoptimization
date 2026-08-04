@@ -1,0 +1,99 @@
+{
+  "b_scale": 5.870331735243639,
+  "coordinate_convention": "SIMPLE Boozer angles mapped to VMEC reference starts",
+  "input_kind": "boozer_chartmap",
+  "invariant_calibration": "same executable, same point, 10 microsecond trace",
+  "lambda_definition": "mu * 5.865 T / E",
+  "mpol": 16,
+  "nmu": 9,
+  "ntheta": 16,
+  "ntor": 16,
+  "nzeta": 16,
+  "records": [
+    {
+      "design_sha256": "79d948c848c8ee415f54dba9758e5891732baaf4472b940e80003268216995da",
+      "name": "s0p25000",
+      "particles": 9216,
+      "start_sha256": "b3bcce85090fa47c95f9b76b1c10cf022f222ecd821e41afb5f324bbe78da097",
+      "surface": 0.25
+    },
+    {
+      "design_sha256": "5a8a87d97469cc90bf7ba228ac89c8cbfbb5c73e17d1c5de372ff21ab9a31ace",
+      "name": "s0p30000",
+      "particles": 9216,
+      "start_sha256": "df72a737cc4f29876c122ab1ebacaa330a01840ba1aa6a58813b8e6cc34f9005",
+      "surface": 0.3
+    },
+    {
+      "design_sha256": "c973598b5cdcac54169c2fa734c8c2f52bb4f0fc3a825f5061f35c53cb58d8f5",
+      "name": "s0p42500",
+      "particles": 9216,
+      "start_sha256": "c2ecf50abe312fa0b68262813f7439674b9c35ea2d40f25c4257d52a91ae97dc",
+      "surface": 0.425
+    },
+    {
+      "design_sha256": "7630560d0bbc43a90c9bd819e336bc83eaf35b14a2ace940296aa7804f9ac67d",
+      "name": "s0p44062",
+      "particles": 9216,
+      "start_sha256": "4198ce838f98ba4d6d79811c9071f440e14ab57ca0f0281d5701a0143b9752fe",
+      "surface": 0.440625
+    },
+    {
+      "design_sha256": "ae9590f82332109d34a6805ea9478bd9e6f52adc70111e84c715485efa99c856",
+      "name": "s0p45625",
+      "particles": 9216,
+      "start_sha256": "fc0aa41893a9c4b31ae89ee3f332bd171e0dcb5ebf3705c48da11621b95dce94",
+      "surface": 0.45625
+    },
+    {
+      "design_sha256": "14385962fd2d86385e670ab15b78afb749191660e05c041c005f3f629a355e87",
+      "name": "s0p48750",
+      "particles": 9216,
+      "start_sha256": "a6cca86ce3b9267878caffe731b7dc8a7daddea3d917d0eb0f3890a18caccb16",
+      "surface": 0.4875
+    },
+    {
+      "design_sha256": "0b3c539d739574ee75fe5efd72266ba0d6783a44d03d1662e29407cc4d349059",
+      "name": "s0p51875",
+      "particles": 9216,
+      "start_sha256": "397300efc690883f62f38acd4ba78f90b3c58c9c5152b6fa4c2306ecae223b7c",
+      "surface": 0.51875
+    },
+    {
+      "design_sha256": "5fc6de2f13beb6e30b0f21f0c8c1014e5d3eef480422b195e7064a690f829560",
+      "name": "s0p55000",
+      "particles": 9216,
+      "start_sha256": "388f1d0574a5b5f5c2553a6f9a5c1b276de6af14640edaa20a0de06f4cd5e51b",
+      "surface": 0.55
+    },
+    {
+      "design_sha256": "4110cec1541985a01c0c1da5d27aa8b5ed9068c8666ed7b8a31277adab0dd4c1",
+      "name": "s0p61250",
+      "particles": 9216,
+      "start_sha256": "2647c223f3be108aaf2e4b79d017a259986f3d1f3092428f1d7be757653ad0ef",
+      "surface": 0.6125
+    },
+    {
+      "design_sha256": "5f57517ee5c0ec4101564e1ea11313aefc50ee5fcb176be49cc516941488bfc3",
+      "name": "s0p67500",
+      "particles": 9216,
+      "start_sha256": "aa03f96df8d5dcf3f77ae3234d82218d347ca5714bb13ba84e16e9f6a3259ec8",
+      "surface": 0.675
+    },
+    {
+      "design_sha256": "09245c45405b25426637c30c4cfb0c5d76ba3e8540feb3c114b4d82a3f6d3d40",
+      "name": "s0p80000",
+      "particles": 9216,
+      "start_sha256": "779c7d67e899ff7f44b8cb0dea3d139cdd603b8b2244a16815d4ee7883fdebc5",
+      "surface": 0.8
+    }
+  ],
+  "rz_scale": 10.1265838202802,
+  "schema_name": "alpha-loss.spatial-topology-design",
+  "schema_version": 1,
+  "shifts": [
+    0.0,
+    0.5
+  ],
+  "wout_sha256": "2c0f1d9914997b214aa095181af0ea6c3e4f9f9af67204f67877cd0ee1fe56bc"
+}

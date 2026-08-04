@@ -21,6 +21,11 @@ GEOMETRY = {
 def barrier_result(**overrides):
     barrier = {
         "barrier_overlap": 0.125,
+        "smooth": {
+            "available": True,
+            "smooth_barrier_overlap_jpar": 0.0875,
+            "smooth_barrier_overlap_topology": 0.1400,
+        },
         "classifier": "topology",
         "prompt_loss_inner": 0.02,
         "trapped_inner": 300,
@@ -39,6 +44,7 @@ def barrier_result(**overrides):
 
 def build(result=None, geometry=None, **kwargs):
     options = {
+        "objective": "discrete",
         "inner_surface": 0.25,
         "outer_surface": 0.6,
         "particles_per_surface": 1024,
@@ -102,3 +108,35 @@ def test_failure_response_carries_no_observation() -> None:
     assert response["observation"] is None
     assert response["failure_kind"] == "equilibrium_failure"
     assert json.dumps(response)
+
+
+# --- objective selection --------------------------------------------------
+
+
+def test_smooth_objectives_are_selectable() -> None:
+    assert build(objective="smooth-jpar")["observation"]["value"] == pytest.approx(0.0875)
+    assert build(objective="smooth-topology")["observation"]["value"] == pytest.approx(0.14)
+
+
+def test_the_discrete_value_is_recorded_whatever_is_optimized() -> None:
+    response = build(objective="smooth-jpar")
+    assert response["metrics"]["discrete_barrier_overlap"] == pytest.approx(0.125)
+    assert response["metrics"]["objective_kind"] == "smooth-jpar"
+
+
+def test_a_smooth_objective_without_scores_is_rejected() -> None:
+    result = barrier_result()
+    result["barrier"]["smooth"] = {"available": False}
+    with pytest.raises(ValueError, match="class_scores"):
+        build(result, objective="smooth-jpar")
+
+
+def test_discrete_still_works_without_smooth_scores() -> None:
+    result = barrier_result()
+    result["barrier"]["smooth"] = {"available": False}
+    assert build(result)["observation"]["value"] == pytest.approx(0.125)
+
+
+def test_unknown_objective_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        build(objective="smooth-fractal")
