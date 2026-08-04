@@ -79,7 +79,8 @@ class ClusterObjective:
                 "sbatch",
                 "--wait",
                 "--parsable",
-                f"--export=ALL,METHOD={self.args.method},EVAL={candidate_id:03d}",
+                f"--export=ALL,METHOD={self.args.method},"
+                f"EVAL={candidate_id:03d},METRIC={self.args.metric}",
                 f"--output={remote_wave}/logs/%j.out",
                 "run_single.sbatch",
             ],
@@ -131,8 +132,9 @@ class ClusterObjective:
             self.ledger_path,
             {
                 "schema_name": "alpha-loss.optimizer-comparison-ledger",
-                "schema_version": 1,
+                "schema_version": 2,
                 "method": self.args.method,
+                "metric": self.args.metric,
                 "budget": self.args.budget,
                 "seed": self.args.seed,
                 "records": self.records,
@@ -154,10 +156,13 @@ def run_turbo(
     anchor = np.full(dimension, 0.5)
     objective(anchor)
     response = _response_from_record(objective.records[0])
+    observation = response["observation"]
+    if observation is None:
+        raise RuntimeError("the anchor evaluation failed; cannot prime TuRBO")
     state = prime_state(
         {
             "dimension": dimension,
-            "constraint_count": 2,
+            "constraint_count": len(observation["constraints"]),
             "budget": args.budget,
             "seed": args.seed,
             "workers": 1,
@@ -254,6 +259,12 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--base-input", type=Path, required=True)
     root.add_argument("--budget", type=int, default=64)
     root.add_argument("--seed", type=int, required=True)
+    root.add_argument(
+        "--metric",
+        choices=("direct-loss", "barrier-overlap"),
+        default="barrier-overlap",
+        help="objective evaluated on the cluster for each candidate",
+    )
     root.add_argument("--host", default="acluster")
     root.add_argument("--remote", default="/home/ert/runs/alpha-optimizer-methods-v1")
     return root
@@ -278,8 +289,9 @@ def main() -> None:
         objective.method_root / "result.json",
         {
             "schema_name": "alpha-loss.optimizer-comparison-result",
-            "schema_version": 1,
+            "schema_version": 2,
             "method": args.method,
+            "metric": args.metric,
             "budget": args.budget,
             "seed": args.seed,
             **result,
