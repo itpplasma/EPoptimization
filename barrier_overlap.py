@@ -567,8 +567,7 @@ def _smooth_metrics(
         "available": True,
         "widths": settings,
         "resolved_fraction": resolved,
-        "smooth_barrier_overlap_jpar": values["jpar"],
-        "smooth_barrier_overlap_topology": values["topology"],
+        **{f"smooth_barrier_overlap_{name}": value for name, value in values.items()},
     }
 
 

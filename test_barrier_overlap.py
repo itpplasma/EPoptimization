@@ -213,3 +213,28 @@ def test_the_threshold_is_the_spline_stencil_width(monkeypatch) -> None:
 def test_adequate_radial_resolution_passes(monkeypatch) -> None:
     monkeypatch.setattr(bo, "flux_surface_count", lambda path: 16)
     assert bo.check_radial_resolution("wout_fine.nc") == 16
+
+
+def test_every_smooth_classifier_is_reported(monkeypatch, tmp_path) -> None:
+    """A value computed but not returned is invisible to the optimizer."""
+    import smooth_barrier as sb
+
+    n = 6
+    rows = np.column_stack([
+        np.arange(1, n + 1), np.zeros(n), np.ones(n), np.zeros(n),
+        np.zeros(n), np.full(n, 0.01), np.full(n, 8), np.ones(n),
+    ])
+    for label in ("inner", "outer"):
+        (tmp_path / label).mkdir()
+        np.savetxt(tmp_path / label / "class_scores.dat", rows)
+
+    mu = np.linspace(1.3e-5, 1.9e-5, n)
+    result = bo._smooth_metrics(
+        {"inner": tmp_path / "inner", "outer": tmp_path / "outer"},
+        mu, mu, edges=bo.fixed_mu_edges(1.0, nbins=8), widths=None,
+    )
+    assert result["available"]
+    for name in ("jpar", "topology", "radial"):
+        assert f"smooth_barrier_overlap_{name}" in result, name
+        assert f"inner_{name}" in result["resolved_fraction"]
+    assert sb.MIN_TIPS == 2
