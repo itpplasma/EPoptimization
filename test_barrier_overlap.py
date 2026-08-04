@@ -171,3 +171,24 @@ def test_classification_reader_rejects_mismatched_particle_indices(tmp_path) -> 
     np.savetxt(tmp_path / "times_lost.dat", np.array([[2, -1.0, 0.5]]))
     with pytest.raises(ValueError):
         bo.load_classification(tmp_path, 4)
+
+
+def test_coarse_equilibria_are_rejected_before_simple_runs(monkeypatch) -> None:
+    monkeypatch.setattr(bo, "flux_surface_count", lambda path: 3)
+    with pytest.raises(ValueError, match="flux surfaces"):
+        bo.check_radial_resolution("wout_coarse.nc")
+
+
+def test_the_threshold_is_the_spline_stencil_width(monkeypatch) -> None:
+    monkeypatch.setattr(bo, "flux_surface_count", lambda path: bo.MINIMUM_FLUX_SURFACES)
+    assert bo.check_radial_resolution("wout.nc") == bo.MINIMUM_FLUX_SURFACES
+    monkeypatch.setattr(
+        bo, "flux_surface_count", lambda path: bo.MINIMUM_FLUX_SURFACES - 1
+    )
+    with pytest.raises(ValueError):
+        bo.check_radial_resolution("wout.nc")
+
+
+def test_adequate_radial_resolution_passes(monkeypatch) -> None:
+    monkeypatch.setattr(bo, "flux_surface_count", lambda path: 16)
+    assert bo.check_radial_resolution("wout_fine.nc") == 16

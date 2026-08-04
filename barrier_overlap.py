@@ -181,11 +181,36 @@ def starting_grid(
     return rows
 
 
+#: SIMPLE splines the equilibrium with ns_s = ns_tp = 5, so a wout with too
+#: few flux surfaces overruns the spline construction and aborts the process
+#: inside spline_vmec_data rather than returning an error.
+MINIMUM_FLUX_SURFACES = 2 * 5 + 1
+
+
 def field_periods(wout_path: str | os.PathLike) -> int:
     from scipy.io import netcdf_file
 
     with netcdf_file(str(wout_path), "r", mmap=False) as dataset:
         return int(dataset.variables["nfp"][()])
+
+
+def flux_surface_count(wout_path: str | os.PathLike) -> int:
+    from scipy.io import netcdf_file
+
+    with netcdf_file(str(wout_path), "r", mmap=False) as dataset:
+        return int(dataset.variables["ns"][()])
+
+
+def check_radial_resolution(wout_path: str | os.PathLike) -> int:
+    """Reject equilibria too coarse for SIMPLE's radial splines."""
+    surfaces = flux_surface_count(wout_path)
+    if surfaces < MINIMUM_FLUX_SURFACES:
+        raise ValueError(
+            f"{wout_path} has ns={surfaces}, below the {MINIMUM_FLUX_SURFACES} "
+            "flux surfaces SIMPLE needs for ns_s = ns_tp = 5; raise NS_ARRAY "
+            "in the VMEC input"
+        )
+    return surfaces
 
 
 def load_classification(
@@ -380,6 +405,7 @@ def barrier_metrics(
     binary_hash = file_sha256(simple_x)
     if binary_hash != expected_simple_sha256:
         raise ValueError("unexpected SIMPLE executable hash")
+    check_radial_resolution(wout_path)
     rz_scale, b_scale = reactor_scale(wout_path)
     nfp = field_periods(wout_path)
     edges = fixed_mu_edges(b_scale, nbins=nbins)
