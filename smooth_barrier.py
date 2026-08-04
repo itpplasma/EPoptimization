@@ -63,6 +63,8 @@ class ClassifierScores:
     jpar_reference: np.ndarray
     topology_margin: np.ndarray
     status: np.ndarray
+    radial_spread: np.ndarray
+    tip_count: np.ndarray
     trap_par: np.ndarray
 
     def __len__(self) -> int:
@@ -73,10 +75,10 @@ def load_class_scores(run: str | Path) -> ClassifierScores:
     """Read ``class_scores.dat`` written by a classifying SIMPLE run."""
     path = Path(run) / "class_scores.dat"
     table = np.loadtxt(path, ndmin=2)
-    if table.shape[1] < 6:
+    if table.shape[1] < 8:
         raise ValueError(
             f"{path} has {table.shape[1]} columns; expected index, spread, "
-            "reference, margin, status and trap_par"
+            "reference, margin, status, radial spread, tip count and trap_par"
         )
     if not np.array_equal(
         table[:, 0].astype(int), np.arange(1, table.shape[0] + 1)
@@ -87,7 +89,9 @@ def load_class_scores(run: str | Path) -> ClassifierScores:
         jpar_reference=table[:, 2],
         topology_margin=table[:, 3],
         status=table[:, 4].astype(int),
-        trap_par=table[:, 5],
+        radial_spread=table[:, 5],
+        tip_count=table[:, 6].astype(int),
+        trap_par=table[:, 7],
     )
 
 
@@ -109,6 +113,32 @@ def trapped_weight(trap_par: np.ndarray, *, width: float) -> np.ndarray:
     return logistic(np.asarray(trap_par, dtype=float), width=width)
 
 
+#: Minimum tips for a radial excursion to exist.
+MIN_TIPS = 2
+
+
+def radial_chaos_score(
+    scores: ClassifierScores, *, width: float, reference: float
+) -> np.ndarray:
+    """Continuous radial transport, in [0, 1].
+
+    The excursion of the banana tips is the width of the radial band an orbit
+    explores. A barrier holds the band narrow; a broken barrier lets it spread.
+    Unlike the class margins this exists for any orbit with two tips, so it
+    carries data where they do not.
+
+    ``reference`` is the excursion at which an orbit counts as fully
+    transporting. The score is a saturating ratio rather than a logistic
+    because the excursion has a hard floor at zero and no natural threshold to
+    sit symmetrically about.
+    """
+    if not np.isfinite(reference) or reference <= 0.0:
+        raise ValueError("radial reference must be finite and positive")
+    ratio = np.asarray(scores.radial_spread, dtype=float) / reference
+    value = 1.0 - np.exp(-np.maximum(ratio, 0.0) / max(width, 1e-12))
+    return np.where(scores.tip_count >= MIN_TIPS, value, 0.0)
+
+
 def resolution_weight(scores: ClassifierScores, *, classifier: str) -> np.ndarray:
     """Whether an orbit carries the margin the score needs.
 
@@ -124,6 +154,8 @@ def resolution_weight(scores: ClassifierScores, *, classifier: str) -> np.ndarra
         ).astype(float)
     if classifier == "topology":
         return (scores.status == STATUS_MARGIN).astype(float)
+    if classifier == "radial":
+        return (scores.tip_count >= MIN_TIPS).astype(float)
     raise ValueError(f"unknown classifier {classifier}")
 
 
@@ -160,12 +192,18 @@ def _has_jpar(scores: ClassifierScores) -> np.ndarray:
 
 
 def chaos_score(
-    scores: ClassifierScores, *, classifier: str, width: float
+    scores: ClassifierScores,
+    *,
+    classifier: str,
+    width: float,
+    radial_reference: float = 1.0,
 ) -> np.ndarray:
     if classifier == "jpar":
         return jpar_chaos_score(scores, width=width)
     if classifier == "topology":
         return topology_chaos_score(scores, width=width)
+    if classifier == "radial":
+        return radial_chaos_score(scores, width=width, reference=radial_reference)
     raise ValueError(f"unknown classifier {classifier}")
 
 
@@ -196,6 +234,7 @@ def smooth_barrier_overlap(
     chaos_width: float,
     trapped_width: float,
     bin_width: float,
+    radial_reference: float = 1.0,
 ) -> float:
     """Mollified barrier overlap.
 
@@ -220,8 +259,14 @@ def smooth_barrier_overlap(
     if inner_total <= 0.0 or outer_total <= 0.0:
         return float("nan")
 
-    inner_chaos = chaos_score(inner, classifier=classifier, width=chaos_width)
-    outer_chaos = chaos_score(outer, classifier=classifier, width=chaos_width)
+    inner_chaos = chaos_score(
+        inner, classifier=classifier, width=chaos_width,
+        radial_reference=radial_reference,
+    )
+    outer_chaos = chaos_score(
+        outer, classifier=classifier, width=chaos_width,
+        radial_reference=radial_reference,
+    )
 
     mu_inner = np.asarray(mu_inner, dtype=float)
     mu_outer = np.asarray(mu_outer, dtype=float)

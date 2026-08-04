@@ -30,7 +30,12 @@ def base_response(request: dict, status: str, failure_kind: str | None) -> dict:
 #: Objective names. "discrete" is the classifier-counting metric; the smooth
 #: variants replace every indicator with a mollified weight and are the ones a
 #: differentiation tool could act on.
-OBJECTIVES = ("discrete", "smooth-jpar", "smooth-topology")
+OBJECTIVES = (
+    "discrete",
+    "smooth-jpar",
+    "smooth-topology",
+    "smooth-radial",
+)
 
 
 def select_objective(barrier: dict, objective: str) -> float:

@@ -505,7 +505,15 @@ def barrier_metrics(
 #: trapped width is absolute in the trapping parameter, and the bin width is
 #: relative to the bin spacing — not to the whole mu span, which would smear a
 #: point across every bin.
-DEFAULT_SMOOTH_WIDTHS = {"chaos": 0.25, "trapped": 0.15, "bin": 0.5}
+DEFAULT_SMOOTH_WIDTHS = {
+    "chaos": 0.25,
+    "trapped": 0.15,
+    "bin": 0.5,
+    # Excursion at which an orbit counts as fully transporting, in units of
+    # normalised toroidal flux. A barrier that holds an orbit inside a few
+    # percent of s is doing its job.
+    "radial_reference": 0.05,
+}
 
 
 def _smooth_metrics(
@@ -535,7 +543,7 @@ def _smooth_metrics(
 
     spacing = float(edges[1] - edges[0])
     values = {}
-    for name in ("jpar", "topology"):
+    for name in ("jpar", "topology", "radial"):
         values[name] = _finite_or_none(smooth_barrier_overlap(
             inner,
             outer,
@@ -546,13 +554,14 @@ def _smooth_metrics(
             chaos_width=settings["chaos"] * TOL_PERPINV,
             trapped_width=settings["trapped"],
             bin_width=settings["bin"] * spacing,
+            radial_reference=settings["radial_reference"],
         ))
     from smooth_barrier import resolved_fraction
 
     resolved = {
         f"{label}_{name}": resolved_fraction(scores, classifier=name)
         for label, scores in (("inner", inner), ("outer", outer))
-        for name in ("jpar", "topology")
+        for name in ("jpar", "topology", "radial")
     }
     return {
         "available": True,

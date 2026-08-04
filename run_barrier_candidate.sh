@@ -68,7 +68,8 @@ python3 "$CODE_ROOT/evaluate_barrier_overlap.py" \
     --classifier "${CLASSIFIER:-topology}" \
     --smooth-chaos-width "${SMOOTH_CHAOS_WIDTH:-0.25}" \
     --smooth-trapped-width "${SMOOTH_TRAPPED_WIDTH:-0.15}" \
-    --smooth-bin-width "${SMOOTH_BIN_WIDTH:-0.05}" \
+    --smooth-bin-width "${SMOOTH_BIN_WIDTH:-0.5}" \
+    --smooth-radial-reference "${SMOOTH_RADIAL_REFERENCE:-0.05}" \
     --timeout "${SIMPLE_TIMEOUT_SECONDS:-3600}"
 
 failure_kind=response_failure

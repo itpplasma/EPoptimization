@@ -31,7 +31,8 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--classifier", default="topology", choices=("topology", "jpar"))
     root.add_argument("--smooth-chaos-width", type=float, default=0.25)
     root.add_argument("--smooth-trapped-width", type=float, default=0.15)
-    root.add_argument("--smooth-bin-width", type=float, default=0.05)
+    root.add_argument("--smooth-bin-width", type=float, default=0.5)
+    root.add_argument("--smooth-radial-reference", type=float, default=0.05)
     root.add_argument("--timeout", type=float, default=3600.0)
     return root
 
@@ -61,6 +62,7 @@ def main() -> None:
             "chaos": args.smooth_chaos_width,
             "trapped": args.smooth_trapped_width,
             "bin": args.smooth_bin_width,
+            "radial_reference": args.smooth_radial_reference,
         },
         simple_executable=args.simple_executable,
         timeout_s=args.timeout,

@@ -9,7 +9,8 @@ from barrier_overlap import barrier_overlap_samples
 EDGES = np.linspace(0.010, 0.030, 5)
 
 
-def scores(spread, margin, status, trap_par, reference=None):
+def scores(spread, margin, status, trap_par, reference=None,
+           radial=None, tips=None):
     n = len(spread)
     return sb.ClassifierScores(
         jpar_spread=np.asarray(spread, dtype=float),
@@ -18,6 +19,10 @@ def scores(spread, margin, status, trap_par, reference=None):
         ),
         topology_margin=np.asarray(margin, dtype=float),
         status=np.asarray(status, dtype=int),
+        radial_spread=np.asarray(
+            radial if radial is not None else np.full(n, 0.01), dtype=float
+        ),
+        tip_count=np.asarray(tips if tips is not None else np.full(n, 8), dtype=int),
         trap_par=np.asarray(trap_par, dtype=float),
     )
 
@@ -218,16 +223,72 @@ def test_overlap_is_nan_without_trapped_weight() -> None:
 
 
 def test_reader_rejects_nonsequential_indices(tmp_path) -> None:
-    np.savetxt(tmp_path / "class_scores.dat", np.array([[2, 0.0, 1.0, 0.0, 1, 0.5]]))
+    np.savetxt(
+        tmp_path / "class_scores.dat",
+        np.array([[2, 0.0, 1.0, 0.0, 1, 0.01, 8, 0.5]]),
+    )
     with pytest.raises(ValueError):
         sb.load_class_scores(tmp_path)
 
 
 def test_reader_round_trips_a_written_table(tmp_path) -> None:
-    rows = np.array([[1, 3.0, 100.0, -0.2, 1, 0.4], [2, 30.0, 90.0, 0.1, 3, -0.2]])
+    rows = np.array([[1, 3.0, 100.0, -0.2, 1, 0.02, 9, 0.4],
+                     [2, 30.0, 90.0, 0.1, 3, 0.05, 12, -0.2]])
     np.savetxt(tmp_path / "class_scores.dat", rows)
     s = sb.load_class_scores(tmp_path)
     assert len(s) == 2
     assert s.jpar_spread[1] == pytest.approx(30.0)
     assert s.status.tolist() == [1, 3]
     assert s.trap_par[0] == pytest.approx(0.4)
+
+
+# --- radial excursion -----------------------------------------------------
+
+
+def test_radial_score_rises_with_the_excursion() -> None:
+    s = scores([0.0] * 3, [0.0] * 3, [0] * 3, [1.0] * 3,
+               radial=[0.0, 0.01, 0.2], tips=[8, 8, 8])
+    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
+    assert value[0] == 0.0
+    assert 0.0 < value[1] < value[2] < 1.0
+    assert np.all(np.diff(value) > 0.0)
+
+
+def test_radial_score_needs_two_tips() -> None:
+    s = scores([0.0] * 2, [0.0] * 2, [0] * 2, [1.0] * 2,
+               radial=[0.2, 0.2], tips=[1, 2])
+    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
+    assert value[0] == 0.0
+    assert value[1] > 0.0
+    assert sb.resolution_weight(s, classifier="radial").tolist() == [0.0, 1.0]
+
+
+def test_radial_score_carries_data_where_the_class_margins_do_not() -> None:
+    """Unresolved orbits still have an excursion; that is the point."""
+    s = scores([0.0] * 4, [0.0] * 4, [sb.STATUS_UNRESOLVED] * 4, [1.0] * 4,
+               radial=[0.001, 0.01, 0.05, 0.2], tips=[4, 6, 8, 10])
+    assert sb.resolved_fraction(s, classifier="jpar") == 0.0
+    assert sb.resolved_fraction(s, classifier="radial") == 1.0
+    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
+    assert np.all(np.diff(value) > 0.0)
+
+
+def test_radial_reference_must_be_positive() -> None:
+    s = scores([0.0], [0.0], [0], [1.0])
+    for bad in (0.0, -1.0, np.nan):
+        with pytest.raises(ValueError):
+            sb.radial_chaos_score(s, width=1.0, reference=bad)
+
+
+def test_radial_overlap_orders_two_designs_by_transport() -> None:
+    n = 120
+    mu = np.linspace(0.011, 0.029, n)
+    quiet = scores([0.0] * n, [0.0] * n, [0] * n, [1.0] * n,
+                   radial=np.full(n, 0.002), tips=np.full(n, 8))
+    loud = scores([0.0] * n, [0.0] * n, [0] * n, [1.0] * n,
+                  radial=np.full(n, 0.08), tips=np.full(n, 8))
+    kwargs = dict(mu_inner=mu, mu_outer=mu, edges=EDGES, classifier="radial",
+                  chaos_width=1.0, trapped_width=0.1, bin_width=0.002,
+                  radial_reference=0.05)
+    assert (sb.smooth_barrier_overlap(quiet, quiet, **kwargs)
+            < sb.smooth_barrier_overlap(loud, loud, **kwargs))
