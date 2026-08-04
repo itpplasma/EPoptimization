@@ -536,7 +536,7 @@ def _smooth_metrics(
     spacing = float(edges[1] - edges[0])
     values = {}
     for name in ("jpar", "topology"):
-        values[name] = smooth_barrier_overlap(
+        values[name] = _finite_or_none(smooth_barrier_overlap(
             inner,
             outer,
             mu_inner=mu_inner,
@@ -546,7 +546,7 @@ def _smooth_metrics(
             chaos_width=settings["chaos"] * TOL_PERPINV,
             trapped_width=settings["trapped"],
             bin_width=settings["bin"] * spacing,
-        )
+        ))
     from smooth_barrier import resolved_fraction
 
     resolved = {
@@ -561,6 +561,17 @@ def _smooth_metrics(
         "smooth_barrier_overlap_jpar": values["jpar"],
         "smooth_barrier_overlap_topology": values["topology"],
     }
+
+
+def _finite_or_none(value: float) -> float | None:
+    """JSON has no NaN. A classifier with no resolved orbits reports null.
+
+    That happens when nothing carries the margin the score needs — the
+    topology score needs a monotonicity margin, which short traces rarely
+    produce — and it must surface as a missing value rather than crash the
+    worker or masquerade as a number.
+    """
+    return float(value) if np.isfinite(value) else None
 
 
 def _chaotic_fraction(sample: tuple[np.ndarray, np.ndarray, np.ndarray]) -> float:

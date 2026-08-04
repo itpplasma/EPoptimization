@@ -47,7 +47,14 @@ def select_objective(barrier: dict, objective: str) -> float:
     key = "smooth_barrier_overlap_" + objective.removeprefix("smooth-")
     if key not in smooth:
         raise ValueError(f"barrier result carries no {key}")
-    return smooth[key]
+    value = smooth[key]
+    if value is None:
+        resolved = (smooth.get("resolved_fraction") or {})
+        raise ValueError(
+            f"{objective} has no value on this candidate: no orbit carried the "
+            f"margin the score needs (resolved fractions {resolved})"
+        )
+    return value
 
 
 def successful_response(

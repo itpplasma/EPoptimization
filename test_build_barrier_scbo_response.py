@@ -140,3 +140,12 @@ def test_discrete_still_works_without_smooth_scores() -> None:
 def test_unknown_objective_is_rejected() -> None:
     with pytest.raises(ValueError):
         build(objective="smooth-fractal")
+
+
+def test_a_null_smooth_value_is_rejected_with_a_clear_error() -> None:
+    """A classifier with no resolved orbits reports null, not a number."""
+    result = barrier_result()
+    result["barrier"]["smooth"]["smooth_barrier_overlap_topology"] = None
+    result["barrier"]["smooth"]["resolved_fraction"] = {"inner_topology": 0.0}
+    with pytest.raises(ValueError, match="no orbit carried the margin"):
+        build(result, objective="smooth-topology")
