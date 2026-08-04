@@ -125,21 +125,36 @@ def reactor_scale(wout_path: str | os.PathLike) -> tuple[float, float]:
     return A_TARGET / minor_radius, B_TARGET / abs(mean_field)
 
 
-def pitch_grid(count: int) -> np.ndarray:
+def pitch_grid(count: int, *, pitch_max: float = 0.6) -> np.ndarray:
     """Signed pitch values whose squares are uniform in quantile.
 
     Uniform spacing in ``lambda**2`` spreads points evenly in magnetic moment
     at fixed field strength, which is the variable the overlap metric bins.
+
+    ``pitch_max`` bounds the grid because a particle is trapped only where
+    ``lambda**2 < 1 - B/B_max``, and the overlap metric discards everything
+    passing. Spanning the full unit interval put seven eighths of the starts
+    outside the trapped region, leaving about eight trapped particles per mu
+    bin. The bound is a fixed constant rather than a per-candidate trapping
+    boundary so that every design is sampled at identical phase-space points.
     """
     if count <= 0 or count % 2 != 0:
         raise ValueError("pitch count must be positive and even")
+    if not 0.0 < pitch_max <= 1.0:
+        raise ValueError("pitch bound must lie in (0, 1]")
     half = count // 2
-    magnitude = np.sqrt((np.arange(half, dtype=float) + 0.5) / half)
+    magnitude = pitch_max * np.sqrt((np.arange(half, dtype=float) + 0.5) / half)
     return np.sort(np.concatenate((-magnitude, magnitude)))
 
 
 def starting_grid(
-    surface: float, *, ntheta: int, nzeta: int, npitch: int, nfp: int
+    surface: float,
+    *,
+    ntheta: int,
+    nzeta: int,
+    npitch: int,
+    nfp: int,
+    pitch_max: float = 0.6,
 ) -> np.ndarray:
     """Deterministic (theta, zeta, pitch) product grid in VMEC coordinates.
 
@@ -153,7 +168,7 @@ def starting_grid(
         raise ValueError("grid counts and field-period number must be positive")
     theta = 2.0 * np.pi * (np.arange(ntheta) + 0.5) / ntheta
     zeta = 2.0 * np.pi * (np.arange(nzeta) + 0.5) / (nfp * nzeta)
-    pitch = pitch_grid(npitch)
+    pitch = pitch_grid(npitch, pitch_max=pitch_max)
     mesh = np.stack(
         np.meshgrid(theta, zeta, pitch, indexing="ij"), axis=-1
     ).reshape(-1, 3)
@@ -346,6 +361,7 @@ def barrier_metrics(
     ntheta: int,
     nzeta: int,
     npitch: int,
+    pitch_max: float,
     nbins: int,
     trace_time: float,
     prompt_time: float,
@@ -380,6 +396,7 @@ def barrier_metrics(
                     nzeta=nzeta,
                     npitch=npitch,
                     nfp=nfp,
+                    pitch_max=pitch_max,
                 ),
                 rz_scale=rz_scale,
                 b_scale=b_scale,
@@ -408,6 +425,7 @@ def barrier_metrics(
             "chaotic_trapped_inner": _chaotic_fraction(inner),
             "chaotic_trapped_outer": _chaotic_fraction(outer),
             "particles_per_surface": ntheta * nzeta * npitch,
+            "pitch_max": float(pitch_max),
             "mu_bin_edges": edges.tolist(),
             "s_inner": float(s_inner),
             "s_outer": float(s_outer),

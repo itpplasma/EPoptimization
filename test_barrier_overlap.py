@@ -7,7 +7,7 @@ import barrier_overlap as bo
 
 
 def test_pitch_grid_is_symmetric_and_inside_the_unit_interval() -> None:
-    pitch = bo.pitch_grid(8)
+    pitch = bo.pitch_grid(8, pitch_max=1.0)
     assert pitch.size == 8
     assert np.allclose(np.sort(pitch), pitch)
     assert np.allclose(pitch, -pitch[::-1])
@@ -18,6 +18,19 @@ def test_pitch_grid_is_symmetric_and_inside_the_unit_interval() -> None:
 def test_pitch_grid_rejects_odd_counts() -> None:
     with pytest.raises(ValueError):
         bo.pitch_grid(7)
+
+
+def test_pitch_grid_respects_the_trapped_bound() -> None:
+    pitch = bo.pitch_grid(16, pitch_max=0.6)
+    assert np.max(np.abs(pitch)) <= 0.6
+    assert np.max(np.abs(pitch)) > 0.5
+
+
+def test_pitch_grid_rejects_bounds_outside_the_unit_interval() -> None:
+    with pytest.raises(ValueError):
+        bo.pitch_grid(8, pitch_max=1.5)
+    with pytest.raises(ValueError):
+        bo.pitch_grid(8, pitch_max=0.0)
 
 
 def test_starting_grid_is_the_full_product_of_its_axes() -> None:

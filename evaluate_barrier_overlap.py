@@ -22,6 +22,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--ntheta", type=int, default=8)
     root.add_argument("--nzeta", type=int, default=8)
     root.add_argument("--npitch", type=int, default=16)
+    root.add_argument("--pitch-max", type=float, default=0.6)
     root.add_argument("--mu-bins", type=int, default=16)
     root.add_argument("--trace-time", type=float, default=0.02)
     root.add_argument("--prompt-time", type=float, default=0.001)
@@ -46,6 +47,7 @@ def main() -> None:
         ntheta=args.ntheta,
         nzeta=args.nzeta,
         npitch=args.npitch,
+        pitch_max=args.pitch_max,
         nbins=args.mu_bins,
         trace_time=args.trace_time,
         prompt_time=args.prompt_time,
