@@ -12,6 +12,13 @@ set -Eeuo pipefail
 : "${EVAL:?EVAL is required}"
 METRIC=${METRIC:-barrier-overlap}
 
+# The driver submits over ssh, so --export=ALL carries only that session's
+# environment. The campaign pins its toolchain here.
+if [ -f "$SLURM_SUBMIT_DIR/env.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$SLURM_SUBMIT_DIR/env.sh"
+fi
+
 export CAMPAIGN_ROOT=${CAMPAIGN_ROOT:-$SLURM_SUBMIT_DIR/campaign}
 export WAVE="$METHOD/eval-$EVAL"
 export CODE_ROOT=${CODE_ROOT:-$HOME/code/EPoptimization}
