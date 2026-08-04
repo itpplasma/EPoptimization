@@ -109,33 +109,50 @@ def trapped_weight(trap_par: np.ndarray, *, width: float) -> np.ndarray:
     return logistic(np.asarray(trap_par, dtype=float), width=width)
 
 
+def resolution_weight(scores: ClassifierScores, *, classifier: str) -> np.ndarray:
+    """Whether an orbit carries the margin the score needs.
+
+    Unresolved orbits are censored, not classified. Scoring them as chaotic
+    would reward designs whose orbits merely resolve faster; scoring them as
+    regular would hide real losses. They are excluded from numerator and
+    denominator alike, and :func:`resolved_fraction` reports how many were
+    dropped so the dilution stays visible.
+    """
+    if classifier == "jpar":
+        return np.isin(
+            scores.status, (STATUS_MARGIN, STATUS_NO_MARGIN)
+        ).astype(float)
+    if classifier == "topology":
+        return (scores.status == STATUS_MARGIN).astype(float)
+    raise ValueError(f"unknown classifier {classifier}")
+
+
+def resolved_fraction(scores: ClassifierScores, *, classifier: str) -> float:
+    return float(np.mean(resolution_weight(scores, classifier=classifier)))
+
+
 def jpar_chaos_score(scores: ClassifierScores, *, width: float) -> np.ndarray:
     """Continuous J_parallel non-conservation, in [0, 1].
 
     The classifier's test is ``spread > tol_perpinv``; the score is a logistic
     in ``spread / tol_perpinv - 1`` so that a hard threshold is the zero-width
-    limit. Orbits that never resolved carry no spread and are scored 1, the
-    same side the classifier puts them on: an orbit that could not be shown
-    regular within ``nturns`` is treated as non-conserving.
+    limit. Orbits with no spread score 0 here and are removed by the
+    resolution weight rather than by a value choice.
     """
     ratio = np.asarray(scores.jpar_spread, dtype=float) / TOL_PERPINV - 1.0
     value = logistic(ratio, width=width)
-    return np.where(_has_jpar(scores), value, 1.0)
+    return np.where(_has_jpar(scores), value, 0.0)
 
 
 def topology_chaos_score(scores: ClassifierScores, *, width: float) -> np.ndarray:
     """Continuous ideal-orbit violation, in [0, 1].
 
     The classifier's test is ``margin < 0``; the score is a logistic in the
-    negated margin. Orbits without a margin fall back to the J_parallel score
-    rather than to a constant, because a run can resolve the invariant while
-    the recurrence test decides the topology, and a constant there would flatten
-    the metric over a whole class of orbits.
+    negated margin. Orbits without a margin score 0 here and are removed by the
+    resolution weight.
     """
     value = logistic(-np.asarray(scores.topology_margin, dtype=float), width=width)
-    return np.where(
-        scores.status == STATUS_MARGIN, value, jpar_chaos_score(scores, width=width)
-    )
+    return np.where(scores.status == STATUS_MARGIN, value, 0.0)
 
 
 def _has_jpar(scores: ClassifierScores) -> np.ndarray:
@@ -192,8 +209,12 @@ def smooth_barrier_overlap(
     passed in rather than taken from the score file because the parallel
     invariant that lives there is a different constant of motion.
     """
-    inner_trapped = trapped_weight(inner.trap_par, width=trapped_width)
-    outer_trapped = trapped_weight(outer.trap_par, width=trapped_width)
+    inner_trapped = trapped_weight(inner.trap_par, width=trapped_width) * (
+        resolution_weight(inner, classifier=classifier)
+    )
+    outer_trapped = trapped_weight(outer.trap_par, width=trapped_width) * (
+        resolution_weight(outer, classifier=classifier)
+    )
     inner_total = float(inner_trapped.sum())
     outer_total = float(outer_trapped.sum())
     if inner_total <= 0.0 or outer_total <= 0.0:

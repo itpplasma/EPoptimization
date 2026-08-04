@@ -6,7 +6,7 @@ import pytest
 import smooth_barrier as sb
 from barrier_overlap import barrier_overlap_samples
 
-EDGES = np.linspace(0.0, 0.04, 5)
+EDGES = np.linspace(0.010, 0.030, 5)
 
 
 def scores(spread, margin, status, trap_par, reference=None):
@@ -47,7 +47,7 @@ def test_narrow_logistic_approaches_the_step_it_replaces() -> None:
 
 
 def test_bin_weights_partition_unity_inside_the_range() -> None:
-    mu = np.array([0.005, 0.015, 0.025, 0.035])
+    mu = np.array([0.012, 0.017, 0.022, 0.027])
     weights = sb.bin_weights(mu, EDGES, width=1e-4)
     assert weights.shape == (4, 4)
     assert np.allclose(weights.sum(axis=0), 1.0, atol=1e-3)
@@ -59,7 +59,7 @@ def test_bin_weights_reject_unsorted_edges() -> None:
 
 
 def test_wider_bins_spread_a_point_across_neighbours() -> None:
-    mu = np.array([0.0201])  # just past an edge
+    mu = np.array([0.0151])  # just past an edge
     sharp = sb.bin_weights(mu, EDGES, width=1e-5)[:, 0]
     soft = sb.bin_weights(mu, EDGES, width=5e-3)[:, 0]
     assert sharp.max() > 0.99
@@ -78,9 +78,33 @@ def test_jpar_score_brackets_the_classifier_threshold() -> None:
     assert value[2] > 0.99
 
 
-def test_unresolved_orbits_score_as_non_conserving() -> None:
-    s = scores([0.0, 0.0], [0.0, 0.0], [sb.STATUS_UNRESOLVED, sb.STATUS_EARLY_STOCHASTIC], [1.0, 1.0])
-    assert np.allclose(sb.jpar_chaos_score(s, width=0.1), 1.0)
+def test_unresolved_orbits_are_censored_not_scored() -> None:
+    s = scores(
+        [0.0, 0.0, 20.0],
+        [0.0, 0.0, 0.0],
+        [sb.STATUS_UNRESOLVED, sb.STATUS_EARLY_STOCHASTIC, sb.STATUS_NO_MARGIN],
+        [1.0, 1.0, 1.0],
+    )
+    weight = sb.resolution_weight(s, classifier="jpar")
+    assert weight.tolist() == [0.0, 0.0, 1.0]
+    assert sb.resolved_fraction(s, classifier="jpar") == pytest.approx(1 / 3)
+    # topology needs a real margin, so only status 1 counts
+    assert sb.resolution_weight(s, classifier="topology").tolist() == [0.0, 0.0, 0.0]
+
+
+def test_censored_orbits_do_not_dilute_the_overlap() -> None:
+    """Adding unresolved orbits must not move the metric."""
+    mu = np.linspace(0.012, 0.021, 6)
+    kwargs = dict(edges=EDGES, classifier="jpar", chaos_width=1.0,
+                  trapped_width=0.1, bin_width=0.002)
+    resolved = scores([20.0] * 6, [0.0] * 6, [3] * 6, [1.0] * 6)
+    base = sb.smooth_barrier_overlap(
+        resolved, resolved, mu_inner=mu, mu_outer=mu, **kwargs)
+    padded = scores([20.0] * 6 + [0.0] * 6, [0.0] * 12, [3] * 6 + [0] * 6, [1.0] * 12)
+    mu_padded = np.concatenate([mu, mu])
+    diluted = sb.smooth_barrier_overlap(
+        padded, padded, mu_inner=mu_padded, mu_outer=mu_padded, **kwargs)
+    assert diluted == pytest.approx(base)
 
 
 def test_topology_score_follows_the_margin_sign() -> None:
@@ -91,9 +115,11 @@ def test_topology_score_follows_the_margin_sign() -> None:
     assert value[2] < 0.01
 
 
-def test_topology_score_falls_back_where_no_margin_exists() -> None:
+def test_topology_score_is_zero_where_no_margin_exists() -> None:
+    """The value is inert; the resolution weight is what removes the orbit."""
     s = scores([100.0], [0.0], [sb.STATUS_NO_MARGIN], [1.0])
-    assert sb.topology_chaos_score(s, width=1e-3)[0] > 0.99
+    assert sb.topology_chaos_score(s, width=1e-3)[0] == 0.0
+    assert sb.resolution_weight(s, classifier="topology")[0] == 0.0
 
 
 def test_unknown_classifier_is_rejected() -> None:
@@ -112,25 +138,20 @@ def _discrete_equivalent(s: sb.ClassifierScores, mu, classifier):
     J_parallel spread counts as non-conserving, and the topology score falls
     back to the J_parallel one where no margin was formed.
     """
-    jpar = np.where(s.jpar_spread > sb.TOL_PERPINV, 2, 1)
-    jpar = np.where(np.isin(s.status, (sb.STATUS_MARGIN, sb.STATUS_NO_MARGIN)), jpar, 2)
     if classifier == "jpar":
-        code = jpar
+        code = np.where(s.jpar_spread > sb.TOL_PERPINV, 2, 1)
     else:
-        code = np.where(
-            s.status == sb.STATUS_MARGIN,
-            np.where(s.topology_margin < 0.0, 2, 1),
-            jpar,
-        )
-    return mu, code, s.trap_par > 0.0
+        code = np.where(s.topology_margin < 0.0, 2, 1)
+    keep = sb.resolution_weight(s, classifier=classifier) > 0.0
+    return mu, code, (s.trap_par > 0.0) & keep
 
 
 @pytest.mark.parametrize("classifier", ["jpar", "topology"])
 def test_smooth_overlap_converges_to_the_discrete_metric(classifier) -> None:
     rng = np.random.default_rng(20260804)
     n = 400
-    mu_in = rng.uniform(0.002, 0.038, n)
-    mu_out = rng.uniform(0.002, 0.038, n)
+    mu_in = rng.uniform(0.011, 0.029, n)
+    mu_out = rng.uniform(0.011, 0.029, n)
     inner = scores(
         rng.uniform(0.0, 40.0, n), rng.uniform(-1.0, 1.0, n),
         rng.choice([1, 3], n), rng.uniform(-1.0, 1.0, n),
@@ -151,7 +172,7 @@ def test_smooth_overlap_converges_to_the_discrete_metric(classifier) -> None:
             classifier=classifier,
             chaos_width=width * sb.TOL_PERPINV,
             trapped_width=width,
-            bin_width=width * 0.04,
+            bin_width=width * 0.005,
         )
         error = abs(smooth - discrete)
         if previous is not None:
@@ -163,7 +184,7 @@ def test_smooth_overlap_converges_to_the_discrete_metric(classifier) -> None:
 def test_smooth_overlap_responds_where_the_discrete_one_cannot() -> None:
     """A sub-threshold drift change moves the smooth metric, not the discrete one."""
     n = 200
-    mu = np.linspace(0.003, 0.037, n)
+    mu = np.linspace(0.011, 0.029, n)
     trap = np.full(n, 1.0)
     base = scores(np.full(n, 5.0), np.zeros(n), np.full(n, 3), trap)
     nudged = scores(np.full(n, 7.0), np.zeros(n), np.full(n, 3), trap)
@@ -189,8 +210,8 @@ def test_overlap_is_nan_without_trapped_weight() -> None:
     n = 8
     s = scores(np.zeros(n), np.zeros(n), np.full(n, 1), np.full(n, -50.0))
     value = sb.smooth_barrier_overlap(
-        s, s, mu_inner=np.linspace(0.01, 0.03, n),
-        mu_outer=np.linspace(0.01, 0.03, n), edges=EDGES, classifier="jpar",
+        s, s, mu_inner=np.linspace(0.012, 0.028, n),
+        mu_outer=np.linspace(0.012, 0.028, n), edges=EDGES, classifier="jpar",
         chaos_width=1.0, trapped_width=1e-3, bin_width=1e-3,
     )
     assert np.isnan(value)

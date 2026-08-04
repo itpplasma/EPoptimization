@@ -278,17 +278,41 @@ def barrier_overlap_samples(
     return float(overlap)
 
 
+#: SIMPLE carries the field in Gauss, so ``perp_inv = v_perp**2 / B`` for a
+#: normalised speed sits near ``1 / (B[T] * 1e4)`` — of order 1e-5 at reactor
+#: field, not of order 0.1.
+GAUSS_PER_TESLA = 1.0e4
+
+#: Fraction of the reference mu the bin band spans on either side. Trapped
+#: particles occupy roughly ``1/B_max`` to ``1/B_min``, a factor set by the
+#: mirror ratio; +-30% covers a mirror ratio of 0.2 with margin.
+MU_BAND_FRACTION = 0.3
+
+
+def reference_mu() -> float:
+    """Perpendicular invariant of a trapped particle at the reactor field."""
+    return 1.0 / (B_TARGET * GAUSS_PER_TESLA)
+
+
 def fixed_mu_edges(b_scale: float, *, nbins: int) -> np.ndarray:
     """Design-independent mu bin edges.
 
-    ``perp_inv`` is ``v_perp**2 / B`` in SIMPLE's normalised units, so for a
-    normalised speed of one it is bounded by ``1 / B_min``. Anchoring the
+    ``perp_inv`` is ``v_perp**2 / B`` in SIMPLE's units, so for a normalised
+    speed of one it is of order ``1 / B_min`` with B in Gauss. Anchoring the
     edges to the reactor field rather than to the sample range keeps the bins
     identical across candidates, which is what the optimizer needs.
+
+    The band is centred on the reference mu rather than starting at zero.
+    Trapped particles occupy a narrow band set by the mirror ratio, so bins
+    running from zero put every one of them in the first bin and throw away
+    all the mu resolution the metric is built on.
     """
     if nbins <= 0 or not np.isfinite(b_scale) or b_scale <= 0.0:
         raise ValueError("bin count and field scale must be positive")
-    return np.linspace(0.0, 1.0 / B_TARGET, nbins + 1)
+    centre = reference_mu()
+    return np.linspace(
+        centre * (1.0 - MU_BAND_FRACTION), centre * (1.0 + MU_BAND_FRACTION), nbins + 1
+    )
 
 
 def classification_loss_metrics(
@@ -478,8 +502,10 @@ def barrier_metrics(
 
 
 #: Default mollifier widths. The chaos width is relative to tol_perpinv, the
-#: trapped width to the trapping parameter, and the bin width to the mu range.
-DEFAULT_SMOOTH_WIDTHS = {"chaos": 0.25, "trapped": 0.15, "bin": 0.05}
+#: trapped width is absolute in the trapping parameter, and the bin width is
+#: relative to the bin spacing — not to the whole mu span, which would smear a
+#: point across every bin.
+DEFAULT_SMOOTH_WIDTHS = {"chaos": 0.25, "trapped": 0.15, "bin": 0.5}
 
 
 def _smooth_metrics(
@@ -507,7 +533,7 @@ def _smooth_metrics(
     except (FileNotFoundError, OSError):
         return {"available": False}
 
-    span = float(edges[-1] - edges[0])
+    spacing = float(edges[1] - edges[0])
     values = {}
     for name in ("jpar", "topology"):
         values[name] = smooth_barrier_overlap(
@@ -519,11 +545,19 @@ def _smooth_metrics(
             classifier=name,
             chaos_width=settings["chaos"] * TOL_PERPINV,
             trapped_width=settings["trapped"],
-            bin_width=settings["bin"] * span,
+            bin_width=settings["bin"] * spacing,
         )
+    from smooth_barrier import resolved_fraction
+
+    resolved = {
+        f"{label}_{name}": resolved_fraction(scores, classifier=name)
+        for label, scores in (("inner", inner), ("outer", outer))
+        for name in ("jpar", "topology")
+    }
     return {
         "available": True,
         "widths": settings,
+        "resolved_fraction": resolved,
         "smooth_barrier_overlap_jpar": values["jpar"],
         "smooth_barrier_overlap_topology": values["topology"],
     }

@@ -129,7 +129,28 @@ def test_mu_edges_do_not_depend_on_the_sample() -> None:
     second = bo.fixed_mu_edges(2.0, nbins=16)
     assert np.array_equal(first, second)
     assert first.size == 17
-    assert first[0] == 0.0
+
+
+def test_mu_edges_sit_on_the_gauss_scale_simple_actually_uses() -> None:
+    """A measured trapped band from a reactor-scale run must land inside.
+
+    SIMPLE carries the field in Gauss, so perp_inv is of order 1e-5, not 0.1.
+    Edges on the Tesla scale put every trapped particle in the first bin and
+    silently reduce a mu-resolved metric to a single-bin one.
+    """
+    edges = bo.fixed_mu_edges(1.0, nbins=16)
+    observed_low, observed_high = 1.4324e-05, 1.7896e-05
+    assert edges[0] < observed_low
+    assert edges[-1] > observed_high
+    occupied = np.unique(np.digitize([observed_low, observed_high], edges))
+    assert occupied.size > 1, "the trapped band must span more than one bin"
+
+
+def test_mu_band_is_centred_not_started_at_zero() -> None:
+    edges = bo.fixed_mu_edges(1.0, nbins=8)
+    centre = bo.reference_mu()
+    assert edges[0] > 0.0
+    assert edges[0] < centre < edges[-1]
 
 
 def test_namelist_pins_the_fast_classifier_without_the_fractal_cut() -> None:
