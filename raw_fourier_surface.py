@@ -13,11 +13,49 @@ from scipy import optimize
 _MODE = re.compile(r"(?:.*:)?(rc|zs)\((\d+),(-?\d+)\)$")
 
 
-def raw_coordinate_contract(base_input: Path, max_mode: int = 2) -> dict:
-    from simsopt.mhd import Vmec
+def load_boundary(base_input: Path):
+    """Read the boundary straight from the VMEC input namelist.
 
-    vmec = Vmec(str(Path(base_input).resolve()), verbose=False)
-    surface = vmec.boundary
+    ``simsopt.mhd.Vmec`` would also serve, but it requires the compiled VMEC2000
+    Python extension and mpi4py. Nothing here runs VMEC — equilibria are solved
+    by the standalone ``xvmec`` binary on the worker — so the pure-Python
+    surface reader is enough and keeps the driver free of that toolchain.
+    """
+    from simsopt.geo import SurfaceRZFourier
+
+    return SurfaceRZFourier.from_vmec_input(str(Path(base_input).resolve()))
+
+
+def write_vmec_input(base_input: Path, surface, path: Path) -> None:
+    """Write a VMEC input carrying ``surface`` and the base file's settings.
+
+    Only the boundary coefficient block is replaced. Resolution, pressure and
+    current profiles, and solver controls are inherited verbatim from the base
+    input, which ``SurfaceRZFourier.get_nml`` alone would drop.
+    """
+    boundary = [
+        line
+        for line in surface.get_nml().splitlines()
+        if line.strip().startswith(("RBC(", "ZBS("))
+    ]
+    if not boundary:
+        raise ValueError("surface namelist carries no boundary coefficients")
+    out: list[str] = []
+    inserted = False
+    for line in Path(base_input).read_text().splitlines():
+        if line.strip().startswith(("RBC(", "ZBS(")):
+            if not inserted:
+                out.extend(boundary)
+                inserted = True
+            continue
+        out.append(line.rstrip())
+    if not inserted:
+        raise ValueError(f"{base_input} carries no boundary block to replace")
+    Path(path).write_text("\n".join(out).rstrip() + "\n")
+
+
+def raw_coordinate_contract(base_input: Path, max_mode: int = 2) -> dict:
+    surface = load_boundary(base_input)
     surface.fix_all()
     surface.fixed_range(
         mmin=0,
@@ -50,8 +88,6 @@ def write_raw_candidate(
     candidate_id: int,
     output: Path,
 ) -> dict:
-    from simsopt.mhd import Vmec
-
     unit = np.asarray(unit_x, dtype=float)
     dimension = len(contract["names"])
     if (
@@ -62,8 +98,7 @@ def write_raw_candidate(
         raise ValueError("raw Fourier coordinates must lie in the unit box")
     if file_sha256(base_input) != contract["base_input_sha256"]:
         raise ValueError("raw Fourier base input hash differs")
-    vmec = Vmec(str(Path(base_input).resolve()), verbose=False)
-    surface = vmec.boundary
+    surface = load_boundary(base_input)
     values = np.asarray(contract["center"]) + (2.0 * unit - 1.0) * np.asarray(
         contract["half_width"]
     )
@@ -90,7 +125,7 @@ def write_raw_candidate(
         request.update({"status": "failed", "failure_kind": "self_intersection"})
         return request
     input_path = target / f"input.{name}"
-    vmec.write_input(str(input_path))
+    write_vmec_input(base_input, surface, input_path)
     normalize_vmec_input(input_path)
     request.update(
         {
