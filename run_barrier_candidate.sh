@@ -55,6 +55,7 @@ python3 "$CODE_ROOT/evaluate_barrier_overlap.py" \
     --out "$case_root/barrier_result" \
     --simple-executable "$SIMPLE_X" \
     --simple-sha256 "$SIMPLE_SHA256" \
+    --work-root "${CLASSIFIER_WORK_ROOT:-$case_root/classifier-work}" \
     --surfaces "${SURFACES:-0.25,0.4,0.55,0.7}" \
     --ntheta "${NTHETA:-8}" \
     --nzeta "${NZETA:-8}" \

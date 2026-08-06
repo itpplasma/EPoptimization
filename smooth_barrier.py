@@ -52,6 +52,22 @@ class ClassifierScores:
     def __len__(self) -> int:
         return int(self.jpar_variation_rate.size)
 
+    def subset(self, rows: slice | np.ndarray) -> "ClassifierScores":
+        """Select particles while preserving the score schema."""
+        return ClassifierScores(
+            jpar_variation_rate=self.jpar_variation_rate[rows],
+            rotation_number_drift=self.rotation_number_drift[rows],
+            precession_turns=self.precession_turns[rows],
+            jpar_sample_count=self.jpar_sample_count[rows],
+            rotation_half_count=self.rotation_half_count[rows],
+            tip_count=self.tip_count[rows],
+            legacy_jpar_spread=self.legacy_jpar_spread[rows],
+            legacy_jpar_reference=self.legacy_jpar_reference[rows],
+            legacy_topology_margin=self.legacy_topology_margin[rows],
+            legacy_status=self.legacy_status[rows],
+            trap_par=self.trap_par[rows],
+        )
+
 
 @dataclass(frozen=True)
 class SurfaceScoreField:
@@ -141,9 +157,7 @@ def resolved_fraction(scores: ClassifierScores, *, classifier: str) -> float:
     return float(np.mean(resolved))
 
 
-def gaussian_kernel(
-    mu: np.ndarray, nodes: np.ndarray, *, width: float
-) -> np.ndarray:
+def gaussian_kernel(mu: np.ndarray, nodes: np.ndarray, *, width: float) -> np.ndarray:
     """Normal-density kernel with shape ``(nodes, particles)``."""
     if not np.isfinite(width) or width <= 0.0:
         raise ValueError("mu width must be finite and positive")

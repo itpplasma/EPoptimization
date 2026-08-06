@@ -56,11 +56,11 @@ INTEGMODE_MIDPOINT = 3
 CLASSIFY_NAMELIST = """&config
   netcdffile = 'wout.nc'
   startmode = 2
-  num_surf = 1
+  num_surf = {num_surf}
   notrace_passing = 1
   ntestpart = {n}
   trace_time = {ttime}
-  sbeg = {sbeg}d0
+  sbeg = {sbeg}
   contr_pp = -1.0d10
   n_e = 2
   n_d = 4
@@ -174,9 +174,9 @@ def starting_grid(
     theta = 2.0 * np.pi * (np.arange(ntheta) + 0.5) / ntheta
     zeta = 2.0 * np.pi * (np.arange(nzeta) + 0.5) / (nfp * nzeta)
     pitch = pitch_grid(npitch, pitch_max=pitch_max)
-    mesh = np.stack(
-        np.meshgrid(theta, zeta, pitch, indexing="ij"), axis=-1
-    ).reshape(-1, 3)
+    mesh = np.stack(np.meshgrid(theta, zeta, pitch, indexing="ij"), axis=-1).reshape(
+        -1, 3
+    )
     rows = np.empty((mesh.shape[0], 5), dtype=float)
     rows[:, 0] = surface
     rows[:, 1] = mesh[:, 0]
@@ -239,9 +239,7 @@ def load_classification(
     particles = np.loadtxt(run / "times_lost.dat", ndmin=2)
     if classes.shape[0] != particles.shape[0]:
         raise ValueError(f"classification particle count mismatch in {run}")
-    if not np.array_equal(
-        classes[:, 0].astype(int), particles[:, 0].astype(int)
-    ):
+    if not np.array_equal(classes[:, 0].astype(int), particles[:, 0].astype(int)):
         raise ValueError(f"classification particle indices mismatch in {run}")
     if classes.shape[1] <= column or particles.shape[1] < 3:
         raise ValueError(f"classification output is missing columns in {run}")
@@ -276,12 +274,8 @@ def barrier_overlap_samples(
     for index in range(nbins):
         low, high = edges[index], edges[index + 1]
         last = index == nbins - 1
-        in_inner = (mu_inner >= low) & (
-            mu_inner <= high if last else mu_inner < high
-        )
-        in_outer = (mu_outer >= low) & (
-            mu_outer <= high if last else mu_outer < high
-        )
+        in_inner = (mu_inner >= low) & (mu_inner <= high if last else mu_inner < high)
+        in_outer = (mu_outer >= low) & (mu_outer <= high if last else mu_outer < high)
         inner = trapped_inner & in_inner
         outer = trapped_outer & in_outer
         if inner.sum() == 0 or outer.sum() == 0:
@@ -361,6 +355,7 @@ def classification_loss_metrics(
     prompt_time: float,
     trace_time: float,
     sample_weights: np.ndarray | None = None,
+    rows: slice | None = None,
 ) -> dict[str, float | int]:
     """Loss fractions from a classification run.
 
@@ -374,6 +369,8 @@ def classification_loss_metrics(
         raise ValueError(f"invalid times_lost.dat in {run}")
     if not 0.0 < prompt_time < trace_time:
         raise ValueError("loss windows require 0 < prompt < trace")
+    if rows is not None:
+        particles = particles[rows]
     times = particles[:, 1]
     prompt = (times > 0.0) & (times <= prompt_time)
     late = (times > prompt_time) & (times < trace_time)
@@ -408,6 +405,7 @@ def run_classification(
     nturns: int,
     seed: int,
     workdir: Path,
+    surface_bounds: Sequence[float] | None = None,
     simple_executable: str | os.PathLike | None = None,
     timeout_s: float = 3600.0,
 ) -> Path:
@@ -418,11 +416,19 @@ def run_classification(
     workdir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(wout_path, workdir / "wout.nc")
     np.savetxt(workdir / "start.dat", starts, fmt="%.17e")
+    bounds = [surface] if surface_bounds is None else list(surface_bounds)
+    if not bounds:
+        raise ValueError("at least one classifier surface is required")
+    namelist_surfaces = [bounds[0]] if len(bounds) == 1 else [bounds[0], bounds[-1]]
+    sbeg = ", ".join(
+        f"{float(value):.16e}".replace("e", "d") for value in namelist_surfaces
+    )
     (workdir / "simple.in").write_text(
         CLASSIFY_NAMELIST.format(
             n=starts.shape[0],
             ttime=_fortran_d(trace_time),
-            sbeg=_fortran_d(surface),
+            num_surf=len(namelist_surfaces),
+            sbeg=sbeg,
             field_type=ISW_FIELD_TYPE_BOOZER,
             integmode=INTEGMODE_MIDPOINT,
             nturns=int(nturns),
@@ -469,7 +475,9 @@ def load_perp_invariant(run: Path) -> np.ndarray:
         raise ValueError(f"class_parts.dat is missing magnetic moment in {run}")
     expected = np.arange(1, table.shape[0] + 1)
     if not np.array_equal(table[:, 0].astype(int), expected):
-        raise ValueError(f"class_parts.dat particle indices are not sequential in {run}")
+        raise ValueError(
+            f"class_parts.dat particle indices are not sequential in {run}"
+        )
     return table[:, 2]
 
 
@@ -489,6 +497,7 @@ def barrier_metrics(
     seed: int,
     continuous_settings: dict | None = None,
     simple_executable: str | os.PathLike | None = None,
+    work_root: str | os.PathLike | None = None,
     keep_workdir: bool = False,
     timeout_s: float = 3600.0,
 ) -> dict:
@@ -506,47 +515,60 @@ def barrier_metrics(
     nfp = field_periods(wout_path)
     nodes = fixed_mu_nodes(nmu)
     particle_weights = starting_weights(ntheta, nzeta, npitch)
-    base = Path(tempfile.mkdtemp(prefix="continuous_barrier_"))
+    work_parent = None if work_root is None else Path(work_root)
+    if work_parent is not None:
+        work_parent.mkdir(parents=True, exist_ok=True)
+    base = Path(tempfile.mkdtemp(prefix="continuous_barrier_", dir=work_parent))
     total_started = time.monotonic()
     try:
-        runs = []
-        run_seconds = []
-        for index, surface in enumerate(surfaces):
-            started = time.monotonic()
-            run = run_classification(
-                wout_path,
-                surface=float(surface),
-                starts=starting_grid(
+        particles_per_surface = ntheta * nzeta * npitch
+        starts = np.concatenate(
+            [
+                starting_grid(
                     float(surface),
                     ntheta=ntheta,
                     nzeta=nzeta,
                     npitch=npitch,
                     nfp=nfp,
                     pitch_max=pitch_max,
-                ),
-                rz_scale=rz_scale,
-                b_scale=b_scale,
-                trace_time=trace_time,
-                nturns=nturns,
-                seed=seed,
-                workdir=base / f"surface_{index:02d}",
-                simple_executable=simple_x,
-                timeout_s=timeout_s,
-            )
-            runs.append(run)
-            run_seconds.append(time.monotonic() - started)
+                )
+                for surface in surfaces
+            ]
+        )
+        surface_slices = [
+            slice(index * particles_per_surface, (index + 1) * particles_per_surface)
+            for index in range(len(surfaces))
+        ]
+        started = time.monotonic()
+        run = run_classification(
+            wout_path,
+            surface=float(surfaces[0]),
+            surface_bounds=(float(surfaces[0]), float(surfaces[-1])),
+            starts=starts,
+            rz_scale=rz_scale,
+            b_scale=b_scale,
+            trace_time=trace_time,
+            nturns=nturns,
+            seed=seed,
+            workdir=base / "all_surfaces",
+            simple_executable=simple_x,
+            timeout_s=timeout_s,
+        )
+        classification_seconds = time.monotonic() - started
         continuous = _continuous_metrics(
-            runs,
+            [run],
             particle_weights,
             nodes=nodes,
             radial_weights=radial_weights,
             settings=continuous_settings,
+            surface_slices=surface_slices,
         )
         losses = classification_loss_metrics(
-            runs[0],
+            run,
             prompt_time=prompt_time,
             trace_time=trace_time,
             sample_weights=particle_weights,
+            rows=surface_slices[0],
         )
         return {
             "continuous": continuous,
@@ -555,10 +577,8 @@ def barrier_metrics(
             "short_loss_birth": losses["total_loss"],
             "loss_metrics_birth": losses,
             "trapped_count_by_surface": continuous["trapped_count_by_surface"],
-            "soft_trapped_mass_by_surface": continuous[
-                "soft_trapped_mass_by_surface"
-            ],
-            "particles_per_surface": ntheta * nzeta * npitch,
+            "soft_trapped_mass_by_surface": continuous["soft_trapped_mass_by_surface"],
+            "particles_per_surface": particles_per_surface,
             "pitch_max": float(pitch_max),
             "sample_distribution": "isotropic-pitch-gauss-legendre-equal-angle",
             "mu_nodes": nodes.tolist(),
@@ -574,7 +594,8 @@ def barrier_metrics(
             "isw_field_type": ISW_FIELD_TYPE_BOOZER,
             "vmec_RZ_scale": float(rz_scale),
             "vmec_B_scale": float(b_scale),
-            "seconds_by_surface": run_seconds,
+            "classification_mode": "batched-surfaces",
+            "classification_seconds": classification_seconds,
             "seconds_total": time.monotonic() - total_started,
             "simple_sha256": binary_hash,
             "wout_sha256": file_sha256(wout_path),
@@ -592,6 +613,7 @@ def _continuous_metrics(
     nodes: np.ndarray,
     radial_weights: np.ndarray,
     settings: dict | None,
+    surface_slices: Sequence[slice] | None = None,
 ) -> dict:
     """Aggregate only raw J_parallel and rotation-drift score fields."""
     from smooth_barrier import (
@@ -611,8 +633,16 @@ def _continuous_metrics(
     if any(not np.isfinite(value) or value <= 0.0 for value in configured.values()):
         raise ValueError("continuous settings must be finite and positive")
 
-    score_runs = [load_class_scores(run) for run in runs]
-    mu_runs = [load_perp_invariant(run) for run in runs]
+    if surface_slices is None:
+        score_runs = [load_class_scores(run) for run in runs]
+        mu_runs = [load_perp_invariant(run) for run in runs]
+    else:
+        if len(runs) != 1:
+            raise ValueError("batched surface slices require exactly one SIMPLE run")
+        all_scores = load_class_scores(runs[0])
+        all_mu = load_perp_invariant(runs[0])
+        score_runs = [all_scores.subset(rows) for rows in surface_slices]
+        mu_runs = [all_mu[rows] for rows in surface_slices]
     if any(len(scores) != particle_weights.size for scores in score_runs):
         raise ValueError("particle quadrature and classifier output sizes differ")
     spacing = float(nodes[1] - nodes[0])
@@ -627,7 +657,7 @@ def _continuous_metrics(
             temperature=configured[f"temperature_{classifier}"],
             trapped_width=configured["trapped_width"],
             mu_width=mu_width,
-            sample_weights_by_surface=[particle_weights] * len(runs),
+            sample_weights_by_surface=[particle_weights] * len(score_runs),
             surface_weights=radial_weights,
         )
         birth_mean = birth_weighted_integral(
@@ -648,9 +678,7 @@ def _continuous_metrics(
             "surface_fields": [
                 {
                     "values": _array_for_json(field.values),
-                    "resolved_coverage": _array_for_json(
-                        field.resolved_coverage
-                    ),
+                    "resolved_coverage": _array_for_json(field.resolved_coverage),
                 }
                 for field in metric.surface_fields
             ],

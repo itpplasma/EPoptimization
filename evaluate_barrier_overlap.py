@@ -17,6 +17,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--out", type=Path, required=True)
     root.add_argument("--simple-executable", type=Path, required=True)
     root.add_argument("--simple-sha256", required=True)
+    root.add_argument("--work-root", type=Path)
     root.add_argument("--surfaces", default="0.25,0.4,0.55,0.7")
     root.add_argument("--ntheta", type=int, default=8)
     root.add_argument("--nzeta", type=int, default=8)
@@ -62,6 +63,7 @@ def main() -> None:
             "temperature_rotation": args.rotation_temperature,
         },
         simple_executable=args.simple_executable,
+        work_root=args.work_root,
         timeout_s=args.timeout,
     )
     args.out.mkdir(parents=True, exist_ok=True)

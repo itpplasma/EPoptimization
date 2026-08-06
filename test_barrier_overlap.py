@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -70,8 +72,12 @@ def test_overlap_is_zero_when_the_barrier_surface_is_wholly_regular() -> None:
     trapped = np.ones(4, dtype=bool)
     edges = np.linspace(0.0, 0.05, 3)
     value = bo.barrier_overlap_samples(
-        mu, np.array([2, 2, 2, 2]), trapped,
-        mu, np.array([1, 1, 1, 1]), trapped,
+        mu,
+        np.array([2, 2, 2, 2]),
+        trapped,
+        mu,
+        np.array([1, 1, 1, 1]),
+        trapped,
         edges=edges,
     )
     assert value == 0.0
@@ -82,8 +88,12 @@ def test_overlap_is_one_when_both_surfaces_are_wholly_chaotic() -> None:
     trapped = np.ones(4, dtype=bool)
     edges = np.linspace(0.0, 0.05, 3)
     value = bo.barrier_overlap_samples(
-        mu, np.array([2, 2, 2, 2]), trapped,
-        mu, np.array([2, 2, 2, 2]), trapped,
+        mu,
+        np.array([2, 2, 2, 2]),
+        trapped,
+        mu,
+        np.array([2, 2, 2, 2]),
+        trapped,
         edges=edges,
     )
     assert value == pytest.approx(1.0)
@@ -97,8 +107,12 @@ def test_overlap_matches_a_hand_computed_two_bin_case() -> None:
     trapped = np.ones(4, dtype=bool)
     edges = np.array([0.0, 0.02, 0.04])
     value = bo.barrier_overlap_samples(
-        mu, np.array([2, 1, 2, 2]), trapped,
-        mu, np.array([2, 1, 1, 1]), trapped,
+        mu,
+        np.array([2, 1, 2, 2]),
+        trapped,
+        mu,
+        np.array([2, 1, 1, 1]),
+        trapped,
         edges=edges,
     )
     assert value == pytest.approx(0.125)
@@ -111,12 +125,20 @@ def test_overlap_ignores_passing_particles() -> None:
     chaotic = np.array([2, 2, 2, 2])
     regular_where_passing = np.array([2, 1, 2, 1])
     assert bo.barrier_overlap_samples(
-        mu, chaotic, trapped_only_first,
-        mu, chaotic, trapped_only_first,
+        mu,
+        chaotic,
+        trapped_only_first,
+        mu,
+        chaotic,
+        trapped_only_first,
         edges=edges,
     ) == bo.barrier_overlap_samples(
-        mu, regular_where_passing, trapped_only_first,
-        mu, regular_where_passing, trapped_only_first,
+        mu,
+        regular_where_passing,
+        trapped_only_first,
+        mu,
+        regular_where_passing,
+        trapped_only_first,
         edges=edges,
     )
 
@@ -125,8 +147,12 @@ def test_overlap_is_nan_without_trapped_particles() -> None:
     mu = np.array([0.01, 0.02])
     none = np.zeros(2, dtype=bool)
     value = bo.barrier_overlap_samples(
-        mu, np.array([2, 2]), none,
-        mu, np.array([2, 2]), np.ones(2, dtype=bool),
+        mu,
+        np.array([2, 2]),
+        none,
+        mu,
+        np.array([2, 2]),
+        np.ones(2, dtype=bool),
         edges=np.array([0.0, 0.05]),
     )
     assert np.isnan(value)
@@ -163,8 +189,16 @@ def test_mu_band_is_centred_not_started_at_zero() -> None:
 
 def test_namelist_pins_the_fast_classifier_without_the_fractal_cut() -> None:
     text = bo.CLASSIFY_NAMELIST.format(
-        n=1024, ttime="2d-2", sbeg="2.5d-1", field_type=2, integmode=3,
-        nturns=8, rz="1d0", b="1d0", seed=12345,
+        n=1024,
+        ttime="2d-2",
+        num_surf=1,
+        sbeg="2.5d-1",
+        field_type=2,
+        integmode=3,
+        nturns=8,
+        rz="1d0",
+        b="1d0",
+        seed=12345,
     )
     assert "fast_class = .True." in text
     assert "class_plot = .False." in text
@@ -174,6 +208,41 @@ def test_namelist_pins_the_fast_classifier_without_the_fractal_cut() -> None:
     assert "startmode = 2" in text
     assert "integmode = 3" in text
     assert "isw_field_type = 2" in text
+
+
+def test_multi_surface_namelist_requests_radial_bminmax_cache(
+    tmp_path, monkeypatch
+) -> None:
+    executable = tmp_path / "simple.x"
+    executable.touch()
+    wout = tmp_path / "wout.nc"
+    wout.touch()
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["namelist"] = (Path(kwargs["cwd"]) / "simple.in").read_text()
+        (Path(kwargs["cwd"]) / "class_parts.dat").touch()
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(bo.subprocess, "run", fake_run)
+    work = tmp_path / "run"
+    bo.run_classification(
+        wout,
+        surface=0.25,
+        surface_bounds=(0.25, 0.7),
+        starts=np.zeros((2, 5)),
+        rz_scale=1.0,
+        b_scale=1.0,
+        trace_time=0.02,
+        nturns=8,
+        seed=1,
+        workdir=work,
+        simple_executable=executable,
+    )
+    assert "num_surf = 2" in captured["namelist"]
+    assert (
+        "sbeg = 2.5000000000000000d-01, 6.9999999999999996d-01" in captured["namelist"]
+    )
 
 
 def test_loss_windows_partition_the_trace(tmp_path) -> None:
@@ -221,6 +290,52 @@ def test_the_threshold_is_the_spline_stencil_width(monkeypatch) -> None:
 def test_adequate_radial_resolution_passes(monkeypatch) -> None:
     monkeypatch.setattr(bo, "flux_surface_count", lambda path: 16)
     assert bo.check_radial_resolution("wout_fine.nc") == 16
+
+
+def test_classifier_work_directory_uses_requested_storage(
+    monkeypatch, tmp_path
+) -> None:
+    requested = tmp_path / "campaign-scratch"
+    observed = {}
+
+    def fake_mkdtemp(*, prefix, dir):
+        observed.update(prefix=prefix, parent=dir)
+        path = Path(dir) / f"{prefix}oracle"
+        path.mkdir()
+        return str(path)
+
+    monkeypatch.setattr(bo.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(bo, "find_simple_x", lambda path: tmp_path / "simple.x")
+    monkeypatch.setattr(bo, "file_sha256", lambda path: "expected")
+    monkeypatch.setattr(bo, "check_radial_resolution", lambda path: 51)
+    monkeypatch.setattr(bo, "reactor_scale", lambda path: (1.0, 1.0))
+    monkeypatch.setattr(bo, "field_periods", lambda path: 4)
+    monkeypatch.setattr(
+        bo,
+        "run_classification",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("oracle stop")),
+    )
+
+    with pytest.raises(RuntimeError, match="oracle stop"):
+        bo.barrier_metrics(
+            "wout.nc",
+            expected_simple_sha256="expected",
+            surfaces=[0.25, 0.7],
+            ntheta=1,
+            nzeta=1,
+            npitch=2,
+            pitch_max=1.0,
+            nmu=3,
+            trace_time=0.02,
+            prompt_time=0.001,
+            nturns=4,
+            seed=1,
+            simple_executable="simple.x",
+            work_root=requested,
+        )
+
+    assert requested.is_dir()
+    assert observed == {"prefix": "continuous_barrier_", "parent": requested}
 
 
 def test_continuous_aggregator_reports_only_raw_fast_classifiers(tmp_path) -> None:
@@ -271,6 +386,55 @@ def test_continuous_aggregator_reports_only_raw_fast_classifiers(tmp_path) -> No
     assert result["rotation"]["birth_mean"] == pytest.approx(0.03)
     assert "topology" not in result
     assert "radial" not in result
+
+
+def test_batched_surface_output_preserves_the_same_softmin_oracle(tmp_path) -> None:
+    n = 6
+    score_rows = []
+    class_rows = []
+    for index, (jpar, rotation) in enumerate(((0.2, 0.03), (0.4, 0.05))):
+        score_rows.append(
+            np.column_stack(
+                [
+                    np.arange(index * n + 1, (index + 1) * n + 1),
+                    np.full(n, jpar),
+                    np.full(n, rotation),
+                    np.ones(n),
+                    np.full(n, 4),
+                    np.full(n, 2),
+                    np.full(n, 6),
+                    np.zeros(n),
+                    np.ones(n),
+                    np.zeros(n),
+                    np.ones(n),
+                    np.ones(n),
+                ]
+            )
+        )
+        class_rows.append(
+            np.column_stack(
+                [
+                    np.arange(index * n + 1, (index + 1) * n + 1),
+                    np.full(n, 0.25 + 0.25 * index),
+                    np.linspace(1.3e-5, 1.9e-5, n),
+                    np.zeros((n, 3)),
+                ]
+            )
+        )
+    np.savetxt(tmp_path / "class_scores.dat", np.concatenate(score_rows))
+    np.savetxt(tmp_path / "class_parts.dat", np.concatenate(class_rows))
+
+    result = bo._continuous_metrics(
+        [tmp_path],
+        np.full(n, 1.0 / n),
+        nodes=bo.fixed_mu_nodes(8),
+        radial_weights=np.array([0.5, 0.5]),
+        settings=None,
+        surface_slices=[slice(0, n), slice(n, 2 * n)],
+    )
+    expected_jpar = 0.2 - 0.1 * np.log((1.0 + np.exp(-2.0)) / 2.0)
+    assert result["jpar"]["birth_mean"] == pytest.approx(0.2)
+    assert result["jpar"]["barrier_defect"] == pytest.approx(expected_jpar)
 
 
 def test_radial_quadrature_matches_a_linear_integral() -> None:
