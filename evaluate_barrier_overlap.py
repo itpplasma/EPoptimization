@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate the barrier-overlap proxy for one equilibrium."""
+"""Evaluate continuous fast-classifier metrics for one equilibrium."""
 
 from __future__ import annotations
 
@@ -17,28 +17,27 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--out", type=Path, required=True)
     root.add_argument("--simple-executable", type=Path, required=True)
     root.add_argument("--simple-sha256", required=True)
-    root.add_argument("--inner-surface", type=float, default=0.25)
-    root.add_argument("--outer-surface", type=float, default=0.6)
+    root.add_argument("--surfaces", default="0.25,0.4,0.55,0.7")
     root.add_argument("--ntheta", type=int, default=8)
     root.add_argument("--nzeta", type=int, default=8)
     root.add_argument("--npitch", type=int, default=16)
-    root.add_argument("--pitch-max", type=float, default=0.6)
-    root.add_argument("--mu-bins", type=int, default=16)
+    root.add_argument("--pitch-max", type=float, default=1.0)
+    root.add_argument("--mu-nodes", type=int, default=24)
     root.add_argument("--trace-time", type=float, default=0.02)
     root.add_argument("--prompt-time", type=float, default=0.001)
     root.add_argument("--nturns", type=int, default=8)
     root.add_argument("--seed", type=int, default=12345)
-    root.add_argument("--classifier", default="topology", choices=("topology", "jpar"))
-    root.add_argument("--smooth-chaos-width", type=float, default=0.25)
-    root.add_argument("--smooth-trapped-width", type=float, default=0.15)
-    root.add_argument("--smooth-bin-width", type=float, default=0.5)
-    root.add_argument("--smooth-radial-reference", type=float, default=0.05)
+    root.add_argument("--trapped-width", type=float, default=0.15)
+    root.add_argument("--mu-width-factor", type=float, default=0.75)
+    root.add_argument("--jpar-temperature", type=float, default=0.1)
+    root.add_argument("--rotation-temperature", type=float, default=0.02)
     root.add_argument("--timeout", type=float, default=3600.0)
     return root
 
 
 def main() -> None:
     args = parser().parse_args()
+    surfaces = [float(value) for value in args.surfaces.split(",") if value.strip()]
     wout = args.wout.resolve()
     observed = file_sha256(wout)
     if observed != args.wout_sha256:
@@ -46,31 +45,29 @@ def main() -> None:
     metrics = barrier_metrics(
         wout,
         expected_simple_sha256=args.simple_sha256,
-        s_inner=args.inner_surface,
-        s_outer=args.outer_surface,
+        surfaces=surfaces,
         ntheta=args.ntheta,
         nzeta=args.nzeta,
         npitch=args.npitch,
         pitch_max=args.pitch_max,
-        nbins=args.mu_bins,
+        nmu=args.mu_nodes,
         trace_time=args.trace_time,
         prompt_time=args.prompt_time,
         nturns=args.nturns,
         seed=args.seed,
-        classifier=args.classifier,
-        smooth_widths={
-            "chaos": args.smooth_chaos_width,
-            "trapped": args.smooth_trapped_width,
-            "bin": args.smooth_bin_width,
-            "radial_reference": args.smooth_radial_reference,
+        continuous_settings={
+            "trapped_width": args.trapped_width,
+            "mu_width_factor": args.mu_width_factor,
+            "temperature_jpar": args.jpar_temperature,
+            "temperature_rotation": args.rotation_temperature,
         },
         simple_executable=args.simple_executable,
         timeout_s=args.timeout,
     )
     args.out.mkdir(parents=True, exist_ok=True)
     document = {
-        "schema_name": "alpha-loss.barrier-overlap-result",
-        "schema_version": 1,
+        "schema_name": "alpha-loss.continuous-fast-classifier-result",
+        "schema_version": 2,
         "barrier": metrics,
         "wout_sha256": observed,
     }

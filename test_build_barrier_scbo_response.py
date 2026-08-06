@@ -20,23 +20,27 @@ GEOMETRY = {
 
 def barrier_result(**overrides):
     barrier = {
-        "barrier_overlap": 0.125,
-        "smooth": {
-            "available": True,
-            "smooth_barrier_overlap_jpar": 0.0875,
-            "smooth_barrier_overlap_topology": 0.1400,
+        "continuous": {
+            "jpar": {
+                "birth_mean": 0.10,
+                "barrier_defect": 0.0875,
+                "resolved_fraction_by_surface": [0.9, 0.8],
+            },
+            "rotation": {
+                "birth_mean": 0.03,
+                "barrier_defect": 0.04,
+                "resolved_fraction_by_surface": [0.85, 0.75],
+            },
         },
-        "classifier": "topology",
-        "prompt_loss_inner": 0.02,
-        "trapped_inner": 300,
-        "trapped_outer": 280,
+        "prompt_loss_birth": 0.02,
+        "trapped_count_by_surface": [300, 295, 290, 280],
         "particles_per_surface": 1024,
         "s_inner": 0.25,
-        "s_outer": 0.6,
+        "s_outer": 0.7,
     }
     barrier.update(overrides)
     return {
-        "schema_name": "alpha-loss.barrier-overlap-result",
+        "schema_name": "alpha-loss.continuous-fast-classifier-result",
         "barrier": barrier,
         "wout_sha256": "abc",
     }
@@ -44,9 +48,9 @@ def barrier_result(**overrides):
 
 def build(result=None, geometry=None, **kwargs):
     options = {
-        "objective": "discrete",
+        "objective": "barrier-jpar",
         "inner_surface": 0.25,
-        "outer_surface": 0.6,
+        "outer_surface": 0.7,
         "particles_per_surface": 1024,
         "prompt_limit": 0.05,
     }
@@ -56,9 +60,9 @@ def build(result=None, geometry=None, **kwargs):
     )
 
 
-def test_objective_is_the_barrier_overlap() -> None:
+def test_objective_is_the_continuous_barrier_defect() -> None:
     response = build()
-    assert response["observation"]["value"] == pytest.approx(0.125)
+    assert response["observation"]["value"] == pytest.approx(0.0875)
     assert response["status"] == "ok"
 
 
@@ -72,7 +76,7 @@ def test_prompt_loss_enters_as_a_third_constraint() -> None:
 
 
 def test_prompt_loss_above_the_limit_is_a_violation() -> None:
-    response = build(barrier_result(prompt_loss_inner=0.10))
+    response = build(barrier_result(prompt_loss_birth=0.10))
     assert response["observation"]["constraints"][2] == pytest.approx(1.0)
 
 
@@ -88,12 +92,14 @@ def test_particle_count_mismatch_is_rejected() -> None:
 
 def test_empty_trapped_population_is_rejected() -> None:
     with pytest.raises(ValueError):
-        build(barrier_result(trapped_outer=0))
+        build(barrier_result(trapped_count_by_surface=[300, 0]))
 
 
 def test_non_finite_overlap_is_rejected() -> None:
+    result = barrier_result()
+    result["barrier"]["continuous"]["jpar"]["barrier_defect"] = float("nan")
     with pytest.raises(ValueError):
-        build(barrier_result(barrier_overlap=float("nan")))
+        build(result)
 
 
 def test_wrong_schema_is_rejected() -> None:
@@ -113,39 +119,33 @@ def test_failure_response_carries_no_observation() -> None:
 # --- objective selection --------------------------------------------------
 
 
-def test_smooth_objectives_are_selectable() -> None:
-    assert build(objective="smooth-jpar")["observation"]["value"] == pytest.approx(0.0875)
-    assert build(objective="smooth-topology")["observation"]["value"] == pytest.approx(0.14)
+def test_raw_and_barrier_objectives_are_selectable() -> None:
+    assert build(objective="jpar")["observation"]["value"] == pytest.approx(0.10)
+    assert build(objective="rotation")["observation"]["value"] == pytest.approx(0.03)
+    assert build(objective="barrier-rotation")["observation"]["value"] == pytest.approx(0.04)
 
 
-def test_the_discrete_value_is_recorded_whatever_is_optimized() -> None:
-    response = build(objective="smooth-jpar")
-    assert response["metrics"]["discrete_barrier_overlap"] == pytest.approx(0.125)
-    assert response["metrics"]["objective_kind"] == "smooth-jpar"
+def test_both_continuous_classifiers_are_recorded() -> None:
+    response = build(objective="barrier-jpar")
+    recorded = response["metrics"]["continuous_fast_classifier"]
+    assert set(recorded) == {"jpar", "rotation"}
+    assert response["metrics"]["objective_kind"] == "barrier-jpar"
 
 
-def test_a_smooth_objective_without_scores_is_rejected() -> None:
+def test_an_objective_without_scores_is_rejected() -> None:
     result = barrier_result()
-    result["barrier"]["smooth"] = {"available": False}
-    with pytest.raises(ValueError, match="class_scores"):
-        build(result, objective="smooth-jpar")
-
-
-def test_discrete_still_works_without_smooth_scores() -> None:
-    result = barrier_result()
-    result["barrier"]["smooth"] = {"available": False}
-    assert build(result)["observation"]["value"] == pytest.approx(0.125)
+    result["barrier"]["continuous"] = {}
+    with pytest.raises(ValueError, match="no value"):
+        build(result, objective="barrier-jpar")
 
 
 def test_unknown_objective_is_rejected() -> None:
     with pytest.raises(ValueError):
-        build(objective="smooth-fractal")
+        build(objective="fractal")
 
 
-def test_a_null_smooth_value_is_rejected_with_a_clear_error() -> None:
-    """A classifier with no resolved orbits reports null, not a number."""
+def test_a_null_continuous_value_reports_resolution() -> None:
     result = barrier_result()
-    result["barrier"]["smooth"]["smooth_barrier_overlap_topology"] = None
-    result["barrier"]["smooth"]["resolved_fraction"] = {"inner_topology": 0.0}
-    with pytest.raises(ValueError, match="no orbit carried the margin"):
-        build(result, objective="smooth-topology")
+    result["barrier"]["continuous"]["rotation"]["barrier_defect"] = None
+    with pytest.raises(ValueError, match="resolved fractions"):
+        build(result, objective="barrier-rotation")

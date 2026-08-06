@@ -48,21 +48,22 @@ export CODE_MANIFEST=$root/code-manifest.sha256
 export CODE_MANIFEST_SHA256=$(cat "$root/code-manifest.sha256.digest")
 export CAMPAIGN_ROOT=$root/campaign
 export INNER_SURFACE=${INNER_SURFACE:-0.25}
-export OUTER_SURFACE=${OUTER_SURFACE:-0.6}
+export OUTER_SURFACE=${OUTER_SURFACE:-0.7}
+export SURFACES=${SURFACES:-0.25,0.4,0.55,0.7}
 export NTHETA=${NTHETA:-8}
 export NZETA=${NZETA:-8}
 export NPITCH=${NPITCH:-16}
-export MU_BINS=${MU_BINS:-16}
+export MU_NODES=${MU_NODES:-24}
 export TRACE_TIME=${TRACE_TIME:-0.02}
 export PROMPT_TIME=${PROMPT_TIME:-0.001}
 export PROMPT_LIMIT=${PROMPT_LIMIT:-0.25}
 export NTURNS=${NTURNS:-8}
 export PARTICLE_SEED=${PARTICLE_SEED:-12345}
-export CLASSIFIER=${CLASSIFIER:-topology}
-export OBJECTIVE=${OBJECTIVE:-discrete}
-export SMOOTH_CHAOS_WIDTH=${SMOOTH_CHAOS_WIDTH:-0.25}
-export SMOOTH_TRAPPED_WIDTH=${SMOOTH_TRAPPED_WIDTH:-0.15}
-export SMOOTH_BIN_WIDTH=${SMOOTH_BIN_WIDTH:-0.5}
+export OBJECTIVE=${OBJECTIVE:-barrier-jpar}
+export TRAPPED_WIDTH=${TRAPPED_WIDTH:-0.15}
+export MU_WIDTH_FACTOR=${MU_WIDTH_FACTOR:-0.75}
+export JPAR_TEMPERATURE=${JPAR_TEMPERATURE:-0.1}
+export ROTATION_TEMPERATURE=${ROTATION_TEMPERATURE:-0.02}
 export SIMPLE_TIMEOUT_SECONDS=${SIMPLE_TIMEOUT_SECONDS:-3600}
 EOF
 
@@ -70,4 +71,4 @@ cp "$code_src/run_single.sbatch" "$root/run_single.sbatch"
 echo "staged $root"
 echo "  simple.x $(sha256sum "$root/toolchain/simple.x" | cut -c1-12)"
 echo "  code     $(cat "$root/code-manifest.sha256.digest" | cut -c1-12)"
-echo "  objective ${OBJECTIVE:-discrete}"
+echo "  objective ${OBJECTIVE:-barrier-jpar}"

@@ -55,21 +55,19 @@ python3 "$CODE_ROOT/evaluate_barrier_overlap.py" \
     --out "$case_root/barrier_result" \
     --simple-executable "$SIMPLE_X" \
     --simple-sha256 "$SIMPLE_SHA256" \
-    --inner-surface "${INNER_SURFACE:-0.25}" \
-    --outer-surface "${OUTER_SURFACE:-0.6}" \
+    --surfaces "${SURFACES:-0.25,0.4,0.55,0.7}" \
     --ntheta "${NTHETA:-8}" \
     --nzeta "${NZETA:-8}" \
     --npitch "${NPITCH:-16}" \
-    --mu-bins "${MU_BINS:-16}" \
+    --mu-nodes "${MU_NODES:-24}" \
     --trace-time "${TRACE_TIME:-0.02}" \
     --prompt-time "${PROMPT_TIME:-0.001}" \
     --nturns "${NTURNS:-8}" \
     --seed "${PARTICLE_SEED:-12345}" \
-    --classifier "${CLASSIFIER:-topology}" \
-    --smooth-chaos-width "${SMOOTH_CHAOS_WIDTH:-0.25}" \
-    --smooth-trapped-width "${SMOOTH_TRAPPED_WIDTH:-0.15}" \
-    --smooth-bin-width "${SMOOTH_BIN_WIDTH:-0.5}" \
-    --smooth-radial-reference "${SMOOTH_RADIAL_REFERENCE:-0.05}" \
+    --trapped-width "${TRAPPED_WIDTH:-0.15}" \
+    --mu-width-factor "${MU_WIDTH_FACTOR:-0.75}" \
+    --jpar-temperature "${JPAR_TEMPERATURE:-0.1}" \
+    --rotation-temperature "${ROTATION_TEMPERATURE:-0.02}" \
     --timeout "${SIMPLE_TIMEOUT_SECONDS:-3600}"
 
 failure_kind=response_failure
@@ -78,9 +76,9 @@ python3 "$CODE_ROOT/build_barrier_scbo_response.py" \
     --result "$case_root/barrier_result/result.json" \
     --geometry "$case_root/geometry.json" \
     --inner-surface "${INNER_SURFACE:-0.25}" \
-    --outer-surface "${OUTER_SURFACE:-0.6}" \
+    --outer-surface "${OUTER_SURFACE:-0.7}" \
     --particles-per-surface "$(( ${NTHETA:-8} * ${NZETA:-8} * ${NPITCH:-16} ))" \
     --prompt-limit "${PROMPT_LIMIT:-0.05}" \
-    --objective "${OBJECTIVE:-discrete}" \
+    --objective "${OBJECTIVE:-barrier-jpar}" \
     --out "$case_root/response.json"
 trap - ERR

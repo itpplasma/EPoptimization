@@ -1,9 +1,9 @@
-"""Barrier-overlap proxy from SIMPLE fast orbit classification.
+"""Continuous radial-barrier proxy from SIMPLE fast orbit classification.
 
-The metric is the mu-resolved barrier-breach fraction: the share of
-birth-surface trapped particles that are chaotic at birth and whose magnetic
-moment lands in a mu region that is also chaotic at the barrier surface. Lower
-is better.
+Production uses only the raw J_parallel variation and tip-map rotation-drift
+scores.  It reconstructs each score on fixed magnetic-moment nodes over several
+radial surfaces, takes a soft minimum along the escape path, and integrates the
+result against deterministic alpha-birth quadrature weights. Lower is better.
 
 Three corrections against the 2026-07 campaign, which concluded the fast
 classifier was slower than direct loss tracing:
@@ -26,8 +26,9 @@ classifier was slower than direct loss tracing:
 Starting points are a deterministic product grid rather than random draws, so
 the same phase-space points are compared across candidate designs.
 
-``class_parts.dat`` columns: idx, s, perp_inv, jpar, topology, fractal, with
-codes 0 = prompt loss or unresolved, 1 = regular/ideal, 2 = chaotic/non-ideal.
+The old two-surface integer overlap helpers remain below only to read archived
+campaigns.  :func:`barrier_metrics` never reads an integer class or invokes the
+Minkowski classifier.
 """
 
 from __future__ import annotations
@@ -37,7 +38,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -125,26 +128,28 @@ def reactor_scale(wout_path: str | os.PathLike) -> tuple[float, float]:
     return A_TARGET / minor_radius, B_TARGET / abs(mean_field)
 
 
-def pitch_grid(count: int, *, pitch_max: float = 0.6) -> np.ndarray:
-    """Signed pitch values whose squares are uniform in quantile.
+def pitch_quadrature(
+    count: int, *, pitch_max: float = 1.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Gauss-Legendre nodes and normalized weights for isotropic pitch.
 
-    Uniform spacing in ``lambda**2`` spreads points evenly in magnetic moment
-    at fixed field strength, which is the variable the overlap metric bins.
-
-    ``pitch_max`` bounds the grid because a particle is trapped only where
-    ``lambda**2 < 1 - B/B_max``, and the overlap metric discards everything
-    passing. Spanning the full unit interval put seven eighths of the starts
-    outside the trapped region, leaving about eight trapped particles per mu
-    bin. The bound is a fixed constant rather than a per-candidate trapping
-    boundary so that every design is sampled at identical phase-space points.
+    Fusion alpha birth is uniform in ``v_parallel / v``.  Fixed quadrature
+    nodes therefore represent that distribution without random sampling and
+    without deriving a grid from the candidate geometry.
     """
-    if count <= 0 or count % 2 != 0:
-        raise ValueError("pitch count must be positive and even")
+    if count <= 0:
+        raise ValueError("pitch count must be positive")
     if not 0.0 < pitch_max <= 1.0:
         raise ValueError("pitch bound must lie in (0, 1]")
-    half = count // 2
-    magnitude = pitch_max * np.sqrt((np.arange(half, dtype=float) + 0.5) / half)
-    return np.sort(np.concatenate((-magnitude, magnitude)))
+    nodes, weights = np.polynomial.legendre.leggauss(count)
+    nodes = pitch_max * nodes
+    weights = pitch_max * weights
+    return nodes, weights / weights.sum()
+
+
+def pitch_grid(count: int, *, pitch_max: float = 1.0) -> np.ndarray:
+    """Pitch nodes from :func:`pitch_quadrature`."""
+    return pitch_quadrature(count, pitch_max=pitch_max)[0]
 
 
 def starting_grid(
@@ -154,7 +159,7 @@ def starting_grid(
     nzeta: int,
     npitch: int,
     nfp: int,
-    pitch_max: float = 0.6,
+    pitch_max: float = 1.0,
 ) -> np.ndarray:
     """Deterministic (theta, zeta, pitch) product grid in VMEC coordinates.
 
@@ -179,6 +184,15 @@ def starting_grid(
     rows[:, 3] = 1.0
     rows[:, 4] = mesh[:, 2]
     return rows
+
+
+def starting_weights(ntheta: int, nzeta: int, npitch: int) -> np.ndarray:
+    """Normalized alpha-birth weights in ``starting_grid`` row order."""
+    if min(ntheta, nzeta, npitch) <= 0:
+        raise ValueError("grid counts must be positive")
+    _, pitch_weights = pitch_quadrature(npitch)
+    weights = np.tile(pitch_weights, ntheta * nzeta)
+    return weights / (ntheta * nzeta)
 
 
 #: SIMPLE splines the equilibrium with ns_s = ns_tp = 5, so a wout with too
@@ -315,8 +329,38 @@ def fixed_mu_edges(b_scale: float, *, nbins: int) -> np.ndarray:
     )
 
 
+def fixed_mu_nodes(count: int) -> np.ndarray:
+    """Design-independent quadrature nodes for continuous ``mu`` fields."""
+    if count < 3:
+        raise ValueError("at least three mu nodes are required")
+    centre = reference_mu()
+    return np.linspace(
+        centre * (1.0 - MU_BAND_FRACTION),
+        centre * (1.0 + MU_BAND_FRACTION),
+        count,
+    )
+
+
+def radial_quadrature_weights(surfaces: Sequence[float]) -> np.ndarray:
+    """Normalized trapezoid weights on an increasing radial path."""
+    surfaces = np.asarray(surfaces, dtype=float)
+    if surfaces.ndim != 1 or surfaces.size < 2:
+        raise ValueError("at least two radial surfaces are required")
+    if not np.all(np.diff(surfaces) > 0.0):
+        raise ValueError("radial surfaces must be strictly increasing")
+    weights = np.empty_like(surfaces)
+    weights[0] = 0.5 * (surfaces[1] - surfaces[0])
+    weights[-1] = 0.5 * (surfaces[-1] - surfaces[-2])
+    weights[1:-1] = 0.5 * (surfaces[2:] - surfaces[:-2])
+    return weights / weights.sum()
+
+
 def classification_loss_metrics(
-    run: Path, *, prompt_time: float, trace_time: float
+    run: Path,
+    *,
+    prompt_time: float,
+    trace_time: float,
+    sample_weights: np.ndarray | None = None,
 ) -> dict[str, float | int]:
     """Loss fractions from a classification run.
 
@@ -334,13 +378,22 @@ def classification_loss_metrics(
     prompt = (times > 0.0) & (times <= prompt_time)
     late = (times > prompt_time) & (times < trace_time)
     count = times.size
+    weights = (
+        np.ones(count, dtype=float)
+        if sample_weights is None
+        else np.asarray(sample_weights, dtype=float)
+    )
+    if weights.shape != (count,) or np.any(weights < 0.0):
+        raise ValueError("loss sample weights are invalid")
+    if not np.all(np.isfinite(weights)) or weights.sum() <= 0.0:
+        raise ValueError("loss sample weights must be finite with positive mass")
     return {
         "particles": int(count),
         "prompt_count": int(prompt.sum()),
         "late_count": int(late.sum()),
-        "prompt_loss": float(prompt.mean()),
-        "late_loss": float(late.mean()),
-        "total_loss": float((prompt | late).mean()),
+        "prompt_loss": float(np.average(prompt, weights=weights)),
+        "late_loss": float(np.average(late, weights=weights)),
+        "total_loss": float(np.average(prompt | late, weights=weights)),
     }
 
 
@@ -401,31 +454,49 @@ def run_classification(
     return workdir
 
 
+DEFAULT_CONTINUOUS_SETTINGS = {
+    "trapped_width": 0.15,
+    "mu_width_factor": 0.75,
+    "temperature_jpar": 0.1,
+    "temperature_rotation": 0.02,
+}
+
+
+def load_perp_invariant(run: Path) -> np.ndarray:
+    """Read magnetic moment without consulting any integer class column."""
+    table = np.loadtxt(run / "class_parts.dat", ndmin=2)
+    if table.shape[1] < 3:
+        raise ValueError(f"class_parts.dat is missing magnetic moment in {run}")
+    expected = np.arange(1, table.shape[0] + 1)
+    if not np.array_equal(table[:, 0].astype(int), expected):
+        raise ValueError(f"class_parts.dat particle indices are not sequential in {run}")
+    return table[:, 2]
+
+
 def barrier_metrics(
     wout_path: str | os.PathLike,
     *,
     expected_simple_sha256: str,
-    s_inner: float,
-    s_outer: float,
+    surfaces: Sequence[float],
     ntheta: int,
     nzeta: int,
     npitch: int,
     pitch_max: float,
-    nbins: int,
+    nmu: int,
     trace_time: float,
     prompt_time: float,
     nturns: int,
     seed: int,
-    classifier: str = "topology",
-    smooth_widths: dict | None = None,
+    continuous_settings: dict | None = None,
     simple_executable: str | os.PathLike | None = None,
     keep_workdir: bool = False,
     timeout_s: float = 3600.0,
 ) -> dict:
-    if classifier not in CLASS_COLUMN:
-        raise ValueError(f"unknown classifier {classifier}")
-    if not 0.0 < s_inner < s_outer < 1.0:
-        raise ValueError("barrier surfaces must satisfy 0 < inner < outer < 1")
+    """Run raw fast classifiers and form continuous radial-barrier fields."""
+    surfaces = np.asarray(surfaces, dtype=float)
+    radial_weights = radial_quadrature_weights(surfaces)
+    if surfaces[0] <= 0.0 or surfaces[-1] >= 1.0:
+        raise ValueError("barrier surfaces must lie strictly inside the plasma")
     simple_x = find_simple_x(simple_executable)
     binary_hash = file_sha256(simple_x)
     if binary_hash != expected_simple_sha256:
@@ -433,16 +504,20 @@ def barrier_metrics(
     check_radial_resolution(wout_path)
     rz_scale, b_scale = reactor_scale(wout_path)
     nfp = field_periods(wout_path)
-    edges = fixed_mu_edges(b_scale, nbins=nbins)
-    base = Path(tempfile.mkdtemp(prefix="barrier_"))
+    nodes = fixed_mu_nodes(nmu)
+    particle_weights = starting_weights(ntheta, nzeta, npitch)
+    base = Path(tempfile.mkdtemp(prefix="continuous_barrier_"))
+    total_started = time.monotonic()
     try:
-        runs = {}
-        for label, surface in (("inner", s_inner), ("outer", s_outer)):
-            runs[label] = run_classification(
+        runs = []
+        run_seconds = []
+        for index, surface in enumerate(surfaces):
+            started = time.monotonic()
+            run = run_classification(
                 wout_path,
-                surface=surface,
+                surface=float(surface),
                 starts=starting_grid(
-                    surface,
+                    float(surface),
                     ntheta=ntheta,
                     nzeta=nzeta,
                     npitch=npitch,
@@ -454,36 +529,43 @@ def barrier_metrics(
                 trace_time=trace_time,
                 nturns=nturns,
                 seed=seed,
-                workdir=base / label,
+                workdir=base / f"surface_{index:02d}",
                 simple_executable=simple_x,
                 timeout_s=timeout_s,
             )
-        column = CLASS_COLUMN[classifier]
-        inner = load_classification(runs["inner"], column)
-        outer = load_classification(runs["outer"], column)
-        overlap = barrier_overlap_samples(*inner, *outer, edges=edges)
-        smooth = _smooth_metrics(
-            runs, inner[0], outer[0], edges=edges, widths=smooth_widths
+            runs.append(run)
+            run_seconds.append(time.monotonic() - started)
+        continuous = _continuous_metrics(
+            runs,
+            particle_weights,
+            nodes=nodes,
+            radial_weights=radial_weights,
+            settings=continuous_settings,
         )
         losses = classification_loss_metrics(
-            runs["inner"], prompt_time=prompt_time, trace_time=trace_time
+            runs[0],
+            prompt_time=prompt_time,
+            trace_time=trace_time,
+            sample_weights=particle_weights,
         )
         return {
-            "barrier_overlap": overlap,
-            "classifier": classifier,
-            "smooth": smooth,
-            "prompt_loss_inner": losses["prompt_loss"],
-            "short_loss_inner": losses["total_loss"],
-            "loss_metrics_inner": losses,
-            "trapped_inner": int(inner[2].sum()),
-            "trapped_outer": int(outer[2].sum()),
-            "chaotic_trapped_inner": _chaotic_fraction(inner),
-            "chaotic_trapped_outer": _chaotic_fraction(outer),
+            "continuous": continuous,
+            "classifiers": ["jpar", "rotation"],
+            "prompt_loss_birth": losses["prompt_loss"],
+            "short_loss_birth": losses["total_loss"],
+            "loss_metrics_birth": losses,
+            "trapped_count_by_surface": continuous["trapped_count_by_surface"],
+            "soft_trapped_mass_by_surface": continuous[
+                "soft_trapped_mass_by_surface"
+            ],
             "particles_per_surface": ntheta * nzeta * npitch,
             "pitch_max": float(pitch_max),
-            "mu_bin_edges": edges.tolist(),
-            "s_inner": float(s_inner),
-            "s_outer": float(s_outer),
+            "sample_distribution": "isotropic-pitch-gauss-legendre-equal-angle",
+            "mu_nodes": nodes.tolist(),
+            "surfaces": surfaces.tolist(),
+            "radial_weights": radial_weights.tolist(),
+            "s_inner": float(surfaces[0]),
+            "s_outer": float(surfaces[-1]),
             "nfp": nfp,
             "trace_time": float(trace_time),
             "nturns": int(nturns),
@@ -492,6 +574,8 @@ def barrier_metrics(
             "isw_field_type": ISW_FIELD_TYPE_BOOZER,
             "vmec_RZ_scale": float(rz_scale),
             "vmec_B_scale": float(b_scale),
+            "seconds_by_surface": run_seconds,
+            "seconds_total": time.monotonic() - total_started,
             "simple_sha256": binary_hash,
             "wout_sha256": file_sha256(wout_path),
             "workdir": str(base) if keep_workdir else "",
@@ -501,93 +585,102 @@ def barrier_metrics(
             shutil.rmtree(base, ignore_errors=True)
 
 
-#: Default mollifier widths. The chaos width is relative to tol_perpinv, the
-#: trapped width is absolute in the trapping parameter, and the bin width is
-#: relative to the bin spacing — not to the whole mu span, which would smear a
-#: point across every bin.
-DEFAULT_SMOOTH_WIDTHS = {
-    "chaos": 0.25,
-    "trapped": 0.15,
-    "bin": 0.5,
-    # Excursion at which an orbit counts as fully transporting, in units of
-    # normalised toroidal flux. A barrier that holds an orbit inside a few
-    # percent of s is doing its job.
-    "radial_reference": 0.05,
-}
-
-
-def _smooth_metrics(
-    runs: dict,
-    mu_inner: np.ndarray,
-    mu_outer: np.ndarray,
+def _continuous_metrics(
+    runs: Sequence[Path],
+    particle_weights: np.ndarray,
     *,
-    edges: np.ndarray,
-    widths: dict | None,
+    nodes: np.ndarray,
+    radial_weights: np.ndarray,
+    settings: dict | None,
 ) -> dict:
-    """Smooth overlaps alongside the discrete one, when scores are available.
+    """Aggregate only raw J_parallel and rotation-drift score fields."""
+    from smooth_barrier import (
+        birth_weighted_integral,
+        continuous_barrier_metric,
+        load_class_scores,
+        resolved_fraction,
+        trapped_weight,
+    )
 
-    ``class_scores.dat`` needs SIMPLE with itpplasma/SIMPLE#513. Without it the
-    discrete metric still works, so a missing file is reported rather than
-    raised: a campaign should not die because the smooth variant is absent.
-    """
-    from smooth_barrier import TOL_PERPINV, load_class_scores, smooth_barrier_overlap
+    configured = dict(DEFAULT_CONTINUOUS_SETTINGS)
+    if settings:
+        unknown = set(settings) - set(configured)
+        if unknown:
+            raise ValueError(f"unknown continuous settings: {sorted(unknown)}")
+        configured.update(settings)
+    if any(not np.isfinite(value) or value <= 0.0 for value in configured.values()):
+        raise ValueError("continuous settings must be finite and positive")
 
-    settings = dict(DEFAULT_SMOOTH_WIDTHS)
-    if widths:
-        settings.update(widths)
-    try:
-        inner = load_class_scores(runs["inner"])
-        outer = load_class_scores(runs["outer"])
-    except (FileNotFoundError, OSError):
-        return {"available": False}
-
-    spacing = float(edges[1] - edges[0])
-    values = {}
-    for name in ("jpar", "topology", "radial"):
-        values[name] = _finite_or_none(smooth_barrier_overlap(
-            inner,
-            outer,
-            mu_inner=mu_inner,
-            mu_outer=mu_outer,
-            edges=edges,
-            classifier=name,
-            chaos_width=settings["chaos"] * TOL_PERPINV,
-            trapped_width=settings["trapped"],
-            bin_width=settings["bin"] * spacing,
-            radial_reference=settings["radial_reference"],
-        ))
-    from smooth_barrier import resolved_fraction
-
-    resolved = {
-        f"{label}_{name}": resolved_fraction(scores, classifier=name)
-        for label, scores in (("inner", inner), ("outer", outer))
-        for name in ("jpar", "topology", "radial")
-    }
+    score_runs = [load_class_scores(run) for run in runs]
+    mu_runs = [load_perp_invariant(run) for run in runs]
+    if any(len(scores) != particle_weights.size for scores in score_runs):
+        raise ValueError("particle quadrature and classifier output sizes differ")
+    spacing = float(nodes[1] - nodes[0])
+    mu_width = configured["mu_width_factor"] * spacing
+    result = {}
+    for classifier in ("jpar", "rotation"):
+        metric = continuous_barrier_metric(
+            score_runs,
+            mu_runs,
+            nodes,
+            classifier=classifier,
+            temperature=configured[f"temperature_{classifier}"],
+            trapped_width=configured["trapped_width"],
+            mu_width=mu_width,
+            sample_weights_by_surface=[particle_weights] * len(runs),
+            surface_weights=radial_weights,
+        )
+        birth_mean = birth_weighted_integral(
+            nodes,
+            metric.surface_fields[0].values,
+            metric.birth_density,
+        )
+        result[classifier] = {
+            "birth_mean": _finite_or_none(birth_mean),
+            "barrier_defect": _finite_or_none(metric.value),
+            "resolved_coverage": _finite_or_none(metric.resolved_coverage),
+            "resolved_fraction_by_surface": [
+                resolved_fraction(scores, classifier=classifier)
+                for scores in score_runs
+            ],
+            "barrier_field": _array_for_json(metric.barrier_field),
+            "birth_density": _array_for_json(metric.birth_density),
+            "surface_fields": [
+                {
+                    "values": _array_for_json(field.values),
+                    "resolved_coverage": _array_for_json(
+                        field.resolved_coverage
+                    ),
+                }
+                for field in metric.surface_fields
+            ],
+        }
+    soft_trapped = [
+        float(
+            np.sum(
+                particle_weights
+                * trapped_weight(scores.trap_par, width=configured["trapped_width"])
+            )
+        )
+        for scores in score_runs
+    ]
     return {
-        "available": True,
-        "widths": settings,
-        "resolved_fraction": resolved,
-        **{f"smooth_barrier_overlap_{name}": value for name, value in values.items()},
+        "settings": {**configured, "mu_width": mu_width},
+        "jpar": result["jpar"],
+        "rotation": result["rotation"],
+        "trapped_count_by_surface": [
+            int(np.sum(scores.trap_par > 0.0)) for scores in score_runs
+        ],
+        "soft_trapped_mass_by_surface": soft_trapped,
     }
 
 
 def _finite_or_none(value: float) -> float | None:
-    """JSON has no NaN. A classifier with no resolved orbits reports null.
-
-    That happens when nothing carries the margin the score needs — the
-    topology score needs a monotonicity margin, which short traces rarely
-    produce — and it must surface as a missing value rather than crash the
-    worker or masquerade as a number.
-    """
     return float(value) if np.isfinite(value) else None
 
 
-def _chaotic_fraction(sample: tuple[np.ndarray, np.ndarray, np.ndarray]) -> float:
-    _, classes, trapped = sample
-    count = int(trapped.sum())
-    if count == 0:
-        return float("nan")
-    return float((classes[trapped] == 2).sum()) / count
+def _array_for_json(values: np.ndarray) -> list[float | None]:
+    return [_finite_or_none(value) for value in np.asarray(values, dtype=float)]
 
 
 def _fortran_d(value: float) -> str:

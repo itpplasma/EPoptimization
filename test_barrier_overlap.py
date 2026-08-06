@@ -15,9 +15,10 @@ def test_pitch_grid_is_symmetric_and_inside_the_unit_interval() -> None:
     assert np.all(np.abs(pitch) > 0.0)
 
 
-def test_pitch_grid_rejects_odd_counts() -> None:
-    with pytest.raises(ValueError):
-        bo.pitch_grid(7)
+def test_pitch_quadrature_integrates_isotropic_pitch_second_moment() -> None:
+    pitch, weights = bo.pitch_quadrature(7)
+    assert weights.sum() == pytest.approx(1.0)
+    assert np.sum(weights * pitch**2) == pytest.approx(1.0 / 3.0)
 
 
 def test_pitch_grid_respects_the_trapped_bound() -> None:
@@ -55,6 +56,13 @@ def test_starting_grid_avoids_symmetry_planes() -> None:
     rows = bo.starting_grid(0.3, ntheta=4, nzeta=4, npitch=2, nfp=2)
     assert np.all(rows[:, 1] > 0.0)
     assert np.all(rows[:, 2] > 0.0)
+
+
+def test_starting_weights_match_grid_order_and_normalise() -> None:
+    weights = bo.starting_weights(3, 2, 8)
+    assert weights.shape == (48,)
+    assert weights.sum() == pytest.approx(1.0)
+    assert np.array_equal(weights[:8], weights[8:16])
 
 
 def test_overlap_is_zero_when_the_barrier_surface_is_wholly_regular() -> None:
@@ -215,26 +223,59 @@ def test_adequate_radial_resolution_passes(monkeypatch) -> None:
     assert bo.check_radial_resolution("wout_fine.nc") == 16
 
 
-def test_every_smooth_classifier_is_reported(monkeypatch, tmp_path) -> None:
-    """A value computed but not returned is invisible to the optimizer."""
-    import smooth_barrier as sb
-
+def test_continuous_aggregator_reports_only_raw_fast_classifiers(tmp_path) -> None:
     n = 6
-    rows = np.column_stack([
-        np.arange(1, n + 1), np.zeros(n), np.ones(n), np.zeros(n),
-        np.zeros(n), np.full(n, 0.01), np.full(n, 8), np.ones(n),
-    ])
-    for label in ("inner", "outer"):
-        (tmp_path / label).mkdir()
-        np.savetxt(tmp_path / label / "class_scores.dat", rows)
+    runs = []
+    for index, (jpar, rotation) in enumerate(((0.2, 0.03), (0.4, 0.05))):
+        run = tmp_path / f"surface_{index}"
+        run.mkdir()
+        score_rows = np.column_stack(
+            [
+                np.arange(1, n + 1),
+                np.full(n, jpar),
+                np.full(n, rotation),
+                np.ones(n),
+                np.full(n, 4),
+                np.full(n, 2),
+                np.full(n, 6),
+                np.zeros(n),
+                np.ones(n),
+                np.zeros(n),
+                np.ones(n),
+                np.ones(n),
+            ]
+        )
+        class_rows = np.column_stack(
+            [
+                np.arange(1, n + 1),
+                np.full(n, 0.25 + 0.25 * index),
+                np.linspace(1.3e-5, 1.9e-5, n),
+                np.zeros((n, 3)),
+            ]
+        )
+        np.savetxt(run / "class_scores.dat", score_rows)
+        np.savetxt(run / "class_parts.dat", class_rows)
+        runs.append(run)
 
-    mu = np.linspace(1.3e-5, 1.9e-5, n)
-    result = bo._smooth_metrics(
-        {"inner": tmp_path / "inner", "outer": tmp_path / "outer"},
-        mu, mu, edges=bo.fixed_mu_edges(1.0, nbins=8), widths=None,
+    nodes = bo.fixed_mu_nodes(8)
+    result = bo._continuous_metrics(
+        runs,
+        np.full(n, 1.0 / n),
+        nodes=nodes,
+        radial_weights=np.array([0.5, 0.5]),
+        settings=None,
     )
-    assert result["available"]
-    for name in ("jpar", "topology", "radial"):
-        assert f"smooth_barrier_overlap_{name}" in result, name
-        assert f"inner_{name}" in result["resolved_fraction"]
-    assert sb.MIN_TIPS == 2
+    expected_jpar = 0.2 - 0.1 * np.log((1.0 + np.exp(-2.0)) / 2.0)
+    assert result["jpar"]["birth_mean"] == pytest.approx(0.2)
+    assert result["jpar"]["barrier_defect"] == pytest.approx(expected_jpar)
+    assert result["rotation"]["birth_mean"] == pytest.approx(0.03)
+    assert "topology" not in result
+    assert "radial" not in result
+
+
+def test_radial_quadrature_matches_a_linear_integral() -> None:
+    surfaces = np.array([0.2, 0.3, 0.7])
+    weights = bo.radial_quadrature_weights(surfaces)
+    average = np.sum(weights * surfaces)
+    assert weights.sum() == pytest.approx(1.0)
+    assert average == pytest.approx(0.45)

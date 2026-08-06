@@ -4,33 +4,45 @@ import numpy as np
 import pytest
 
 import smooth_barrier as sb
-from barrier_overlap import barrier_overlap_samples
-
-EDGES = np.linspace(0.010, 0.030, 5)
 
 
-def scores(spread, margin, status, trap_par, reference=None,
-           radial=None, tips=None):
-    n = len(spread)
+def scores(
+    jpar,
+    rotation,
+    *,
+    jpar_samples=None,
+    rotation_samples=None,
+    trap_par=None,
+    legacy_status=None,
+):
+    jpar = np.asarray(jpar, dtype=float)
+    rotation = np.asarray(rotation, dtype=float)
+    n = jpar.size
     return sb.ClassifierScores(
-        jpar_spread=np.asarray(spread, dtype=float),
-        jpar_reference=np.asarray(
-            reference if reference is not None else np.full(n, 1000.0), dtype=float
+        jpar_variation_rate=jpar,
+        rotation_number_drift=rotation,
+        precession_turns=np.ones(n),
+        jpar_sample_count=np.asarray(
+            jpar_samples if jpar_samples is not None else np.ones(n), dtype=int
         ),
-        topology_margin=np.asarray(margin, dtype=float),
-        status=np.asarray(status, dtype=int),
-        radial_spread=np.asarray(
-            radial if radial is not None else np.full(n, 0.01), dtype=float
+        rotation_half_count=np.asarray(
+            rotation_samples if rotation_samples is not None else np.ones(n),
+            dtype=int,
         ),
-        tip_count=np.asarray(tips if tips is not None else np.full(n, 8), dtype=int),
-        trap_par=np.asarray(trap_par, dtype=float),
+        tip_count=np.full(n, 6, dtype=int),
+        legacy_jpar_spread=np.zeros(n),
+        legacy_jpar_reference=np.ones(n),
+        legacy_topology_margin=np.zeros(n),
+        legacy_status=np.asarray(
+            legacy_status if legacy_status is not None else np.zeros(n), dtype=int
+        ),
+        trap_par=np.asarray(
+            trap_par if trap_par is not None else np.zeros(n), dtype=float
+        ),
     )
 
 
-# --- mollifier building blocks -------------------------------------------
-
-
-def test_logistic_is_monotone_and_bounded() -> None:
+def test_logistic_is_monotone_bounded_and_centred() -> None:
     x = np.linspace(-10.0, 10.0, 101)
     y = sb.logistic(x, width=1.0)
     assert np.all(np.diff(y) > 0.0)
@@ -44,251 +56,166 @@ def test_logistic_rejects_a_nonpositive_width() -> None:
             sb.logistic(np.array([0.0]), width=bad)
 
 
-def test_narrow_logistic_approaches_the_step_it_replaces() -> None:
-    x = np.array([-1.0, 1.0])
-    y = sb.logistic(x, width=1e-3)
-    assert y[0] < 1e-6
-    assert y[1] > 1.0 - 1e-6
-
-
-def test_bin_weights_partition_unity_inside_the_range() -> None:
-    mu = np.array([0.012, 0.017, 0.022, 0.027])
-    weights = sb.bin_weights(mu, EDGES, width=1e-4)
-    assert weights.shape == (4, 4)
-    assert np.allclose(weights.sum(axis=0), 1.0, atol=1e-3)
-
-
-def test_bin_weights_reject_unsorted_edges() -> None:
-    with pytest.raises(ValueError):
-        sb.bin_weights(np.array([0.1]), np.array([1.0, 0.0]), width=0.1)
-
-
-def test_wider_bins_spread_a_point_across_neighbours() -> None:
-    mu = np.array([0.0151])  # just past an edge
-    sharp = sb.bin_weights(mu, EDGES, width=1e-5)[:, 0]
-    soft = sb.bin_weights(mu, EDGES, width=5e-3)[:, 0]
-    assert sharp.max() > 0.99
-    assert soft.max() < 0.99
-    assert np.count_nonzero(soft > 0.01) > np.count_nonzero(sharp > 0.01)
-
-
-# --- chaos scores ---------------------------------------------------------
-
-
-def test_jpar_score_brackets_the_classifier_threshold() -> None:
-    s = scores([0.0, sb.TOL_PERPINV, 100.0], [0.0] * 3, [1, 1, 1], [1.0] * 3)
-    value = sb.jpar_chaos_score(s, width=1e-3)
-    assert value[0] < 0.01
-    assert value[1] == pytest.approx(0.5, abs=1e-6)
-    assert value[2] > 0.99
-
-
-def test_unresolved_orbits_are_censored_not_scored() -> None:
-    s = scores(
-        [0.0, 0.0, 20.0],
-        [0.0, 0.0, 0.0],
-        [sb.STATUS_UNRESOLVED, sb.STATUS_EARLY_STOCHASTIC, sb.STATUS_NO_MARGIN],
-        [1.0, 1.0, 1.0],
+def test_resolution_uses_raw_score_metadata_not_legacy_status() -> None:
+    sample = scores(
+        [1.0, 2.0, 3.0],
+        [0.1, 0.2, 0.3],
+        jpar_samples=[2, 0, 4],
+        rotation_samples=[0, 2, 2],
+        legacy_status=[1, 1, 3],
     )
-    weight = sb.resolution_weight(s, classifier="jpar")
-    assert weight.tolist() == [0.0, 0.0, 1.0]
-    assert sb.resolved_fraction(s, classifier="jpar") == pytest.approx(1 / 3)
-    # topology needs a real margin, so only status 1 counts
-    assert sb.resolution_weight(s, classifier="topology").tolist() == [0.0, 0.0, 0.0]
+    _, jpar = sb.score_and_resolution(sample, classifier="jpar")
+    _, rotation = sb.score_and_resolution(sample, classifier="rotation")
+    assert jpar.tolist() == [1.0, 0.0, 1.0]
+    assert rotation.tolist() == [0.0, 1.0, 1.0]
 
 
-def test_censored_orbits_do_not_dilute_the_overlap() -> None:
-    """Adding unresolved orbits must not move the metric."""
-    mu = np.linspace(0.012, 0.021, 6)
-    kwargs = dict(edges=EDGES, classifier="jpar", chaos_width=1.0,
-                  trapped_width=0.1, bin_width=0.002)
-    resolved = scores([20.0] * 6, [0.0] * 6, [3] * 6, [1.0] * 6)
-    base = sb.smooth_barrier_overlap(
-        resolved, resolved, mu_inner=mu, mu_outer=mu, **kwargs)
-    padded = scores([20.0] * 6 + [0.0] * 6, [0.0] * 12, [3] * 6 + [0] * 6, [1.0] * 12)
-    mu_padded = np.concatenate([mu, mu])
-    diluted = sb.smooth_barrier_overlap(
-        padded, padded, mu_inner=mu_padded, mu_outer=mu_padded, **kwargs)
-    assert diluted == pytest.approx(base)
-
-
-def test_topology_score_follows_the_margin_sign() -> None:
-    s = scores([0.0] * 3, [-1.0, 0.0, 1.0], [1, 1, 1], [1.0] * 3)
-    value = sb.topology_chaos_score(s, width=1e-3)
-    assert value[0] > 0.99
-    assert value[1] == pytest.approx(0.5, abs=1e-6)
-    assert value[2] < 0.01
-
-
-def test_topology_score_is_zero_where_no_margin_exists() -> None:
-    """The value is inert; the resolution weight is what removes the orbit."""
-    s = scores([100.0], [0.0], [sb.STATUS_NO_MARGIN], [1.0])
-    assert sb.topology_chaos_score(s, width=1e-3)[0] == 0.0
-    assert sb.resolution_weight(s, classifier="topology")[0] == 0.0
-
-
-def test_unknown_classifier_is_rejected() -> None:
-    s = scores([0.0], [0.0], [1], [1.0])
-    with pytest.raises(ValueError):
-        sb.chaos_score(s, classifier="fractal", width=0.1)
-
-
-# --- the convergence property that makes this a valid surrogate ----------
-
-
-def _discrete_equivalent(s: sb.ClassifierScores, mu, classifier):
-    """Integer classes implied by the same margins, for the discrete metric.
-
-    Mirrors the fallbacks in the smooth scores exactly: an orbit with no
-    J_parallel spread counts as non-conserving, and the topology score falls
-    back to the J_parallel one where no margin was formed.
-    """
-    if classifier == "jpar":
-        code = np.where(s.jpar_spread > sb.TOL_PERPINV, 2, 1)
-    else:
-        code = np.where(s.topology_margin < 0.0, 2, 1)
-    keep = sb.resolution_weight(s, classifier=classifier) > 0.0
-    return mu, code, (s.trap_par > 0.0) & keep
-
-
-@pytest.mark.parametrize("classifier", ["jpar", "topology"])
-def test_smooth_overlap_converges_to_the_discrete_metric(classifier) -> None:
-    rng = np.random.default_rng(20260804)
-    n = 400
-    mu_in = rng.uniform(0.011, 0.029, n)
-    mu_out = rng.uniform(0.011, 0.029, n)
-    inner = scores(
-        rng.uniform(0.0, 40.0, n), rng.uniform(-1.0, 1.0, n),
-        rng.choice([1, 3], n), rng.uniform(-1.0, 1.0, n),
+def test_surface_field_matches_a_hand_weighted_mean() -> None:
+    sample = scores([1.0, 3.0], [0.0, 0.0])
+    field = sb.surface_score_field(
+        sample,
+        np.array([0.0, 0.0]),
+        np.array([-0.1, 0.1]),
+        classifier="jpar",
+        trapped_width=1.0,
+        mu_width=0.2,
+        sample_weights=np.array([1.0, 3.0]),
     )
-    outer = scores(
-        rng.uniform(0.0, 40.0, n), rng.uniform(-1.0, 1.0, n),
-        rng.choice([1, 3], n), rng.uniform(-1.0, 1.0, n),
+    assert field.values == pytest.approx([2.5, 2.5])
+    assert field.resolved_coverage == pytest.approx([1.0, 1.0])
+
+
+def test_unresolved_sample_is_censored_and_reported_in_coverage() -> None:
+    sample = scores(
+        [2.0, 100.0],
+        [0.0, 0.0],
+        jpar_samples=[1, 0],
     )
-    discrete = barrier_overlap_samples(
-        *_discrete_equivalent(inner, mu_in, classifier),
-        *_discrete_equivalent(outer, mu_out, classifier),
-        edges=EDGES,
+    field = sb.surface_score_field(
+        sample,
+        np.array([0.0, 0.0]),
+        np.array([-0.1, 0.1]),
+        classifier="jpar",
+        trapped_width=1.0,
+        mu_width=0.2,
     )
-    previous = None
-    for width in (1e-1, 1e-2, 1e-3, 1e-5):
-        smooth = sb.smooth_barrier_overlap(
-            inner, outer, mu_inner=mu_in, mu_outer=mu_out, edges=EDGES,
-            classifier=classifier,
-            chaos_width=width * sb.TOL_PERPINV,
-            trapped_width=width,
-            bin_width=width * 0.005,
-        )
-        error = abs(smooth - discrete)
-        if previous is not None:
-            assert error <= previous + 1e-9, "narrowing the mollifier diverged"
-        previous = error
-    assert previous < 1e-3, f"did not converge to the discrete metric: {previous}"
+    assert field.values == pytest.approx([2.0, 2.0])
+    assert field.resolved_coverage == pytest.approx([0.5, 0.5])
 
 
-def test_smooth_overlap_responds_where_the_discrete_one_cannot() -> None:
-    """A sub-threshold drift change moves the smooth metric, not the discrete one."""
-    n = 200
-    mu = np.linspace(0.011, 0.029, n)
-    trap = np.full(n, 1.0)
-    base = scores(np.full(n, 5.0), np.zeros(n), np.full(n, 3), trap)
-    nudged = scores(np.full(n, 7.0), np.zeros(n), np.full(n, 3), trap)
+def test_weighted_softmin_matches_log_mean_exp_oracle() -> None:
+    values = np.array([[0.0, 4.0], [2.0, 4.0]])
+    actual = sb.softmin_across_surfaces(values, temperature=1.0)
+    expected_first = -np.log((1.0 + np.exp(-2.0)) / 2.0)
+    assert actual == pytest.approx([expected_first, 4.0])
 
-    discrete_base = barrier_overlap_samples(
-        *_discrete_equivalent(base, mu, "jpar"),
-        *_discrete_equivalent(base, mu, "jpar"), edges=EDGES)
-    discrete_nudged = barrier_overlap_samples(
-        *_discrete_equivalent(nudged, mu, "jpar"),
-        *_discrete_equivalent(nudged, mu, "jpar"), edges=EDGES)
-    assert discrete_base == discrete_nudged  # both below threshold: no signal
 
+def test_birth_weighted_integral_matches_trapezoid_oracle() -> None:
+    nodes = np.array([0.0, 1.0, 2.0])
+    value = sb.birth_weighted_integral(
+        nodes, np.array([0.0, 1.0, 2.0]), np.ones(3)
+    )
+    assert value == pytest.approx(1.0)
+
+
+def test_constant_surface_scores_give_an_exact_barrier_metric() -> None:
+    inner = scores(np.full(4, 1.0), np.full(4, 0.1))
+    outer = scores(np.full(4, 3.0), np.full(4, 0.4))
+    mu = np.linspace(-0.05, 0.05, 4)
+    nodes = np.linspace(-0.1, 0.1, 5)
+    metric = sb.continuous_barrier_metric(
+        [inner, outer],
+        [mu, mu],
+        nodes,
+        classifier="jpar",
+        temperature=1.0,
+        trapped_width=1.0,
+        mu_width=0.05,
+    )
+    expected = -np.log((np.exp(-1.0) + np.exp(-3.0)) / 2.0)
+    assert metric.value == pytest.approx(expected)
+    assert metric.barrier_field == pytest.approx(np.full(nodes.size, expected))
+    assert metric.resolved_coverage == pytest.approx(1.0)
+
+
+def test_intact_low_drift_surface_reduces_the_barrier_defect() -> None:
+    mu = np.linspace(-0.05, 0.05, 8)
+    nodes = np.linspace(-0.1, 0.1, 9)
+    low = scores(np.full(8, 0.1), np.zeros(8))
+    high = scores(np.full(8, 5.0), np.zeros(8))
     kwargs = dict(
-        mu_inner=mu, mu_outer=mu, edges=EDGES, classifier="jpar",
-        chaos_width=sb.TOL_PERPINV * 0.2, trapped_width=0.1, bin_width=0.002,
+        nodes=nodes,
+        classifier="jpar",
+        temperature=0.2,
+        trapped_width=1.0,
+        mu_width=0.05,
     )
-    smooth_base = sb.smooth_barrier_overlap(base, base, **kwargs)
-    smooth_nudged = sb.smooth_barrier_overlap(nudged, nudged, **kwargs)
-    assert smooth_nudged > smooth_base
+    intact = sb.continuous_barrier_metric([high, low], [mu, mu], **kwargs)
+    broken = sb.continuous_barrier_metric([high, high], [mu, mu], **kwargs)
+    assert intact.value < broken.value
 
 
-def test_overlap_is_nan_without_trapped_weight() -> None:
-    n = 8
-    s = scores(np.zeros(n), np.zeros(n), np.full(n, 1), np.full(n, -50.0))
-    value = sb.smooth_barrier_overlap(
-        s, s, mu_inner=np.linspace(0.012, 0.028, n),
-        mu_outer=np.linspace(0.012, 0.028, n), edges=EDGES, classifier="jpar",
-        chaos_width=1.0, trapped_width=1e-3, bin_width=1e-3,
+def test_subthreshold_language_cannot_create_a_plateau() -> None:
+    """Any raw-score change moves the metric; no class threshold is applied."""
+    mu = np.linspace(-0.05, 0.05, 8)
+    nodes = np.linspace(-0.1, 0.1, 9)
+    first = scores(np.full(8, 0.10), np.zeros(8))
+    second = scores(np.full(8, 0.11), np.zeros(8))
+    kwargs = dict(
+        mu_by_surface=[mu],
+        nodes=nodes,
+        classifier="jpar",
+        temperature=0.2,
+        trapped_width=1.0,
+        mu_width=0.05,
     )
-    assert np.isnan(value)
+    value_first = sb.continuous_barrier_metric([first], **kwargs).value
+    value_second = sb.continuous_barrier_metric([second], **kwargs).value
+    assert value_second > value_first
 
 
-def test_reader_rejects_nonsequential_indices(tmp_path) -> None:
-    np.savetxt(
-        tmp_path / "class_scores.dat",
-        np.array([[2, 0.0, 1.0, 0.0, 1, 0.01, 8, 0.5]]),
+def test_quadrature_result_is_invariant_to_weight_preserving_duplication() -> None:
+    base = scores([1.0, 3.0], [0.1, 0.3])
+    duplicate = scores([1.0, 3.0, 1.0, 3.0], [0.1, 0.3, 0.1, 0.3])
+    nodes = np.array([-0.1, 0.1])
+    base_field = sb.surface_score_field(
+        base,
+        np.array([0.0, 0.0]),
+        nodes,
+        classifier="jpar",
+        trapped_width=1.0,
+        mu_width=0.2,
+        sample_weights=np.array([1.0, 3.0]),
     )
-    with pytest.raises(ValueError):
-        sb.load_class_scores(tmp_path)
+    duplicate_field = sb.surface_score_field(
+        duplicate,
+        np.zeros(4),
+        nodes,
+        classifier="jpar",
+        trapped_width=1.0,
+        mu_width=0.2,
+        sample_weights=np.array([0.5, 1.5, 0.5, 1.5]),
+    )
+    assert duplicate_field.values == pytest.approx(base_field.values)
+    assert duplicate_field.birth_density == pytest.approx(base_field.birth_density)
 
 
-def test_reader_round_trips_a_written_table(tmp_path) -> None:
-    rows = np.array([[1, 3.0, 100.0, -0.2, 1, 0.02, 9, 0.4],
-                     [2, 30.0, 90.0, 0.1, 3, 0.05, 12, -0.2]])
+def test_reader_round_trips_the_continuous_schema(tmp_path) -> None:
+    rows = np.array(
+        [
+            [1, 0.2, 0.03, 1.5, 4, 2, 7, 10.0, 100.0, -0.2, 1, 0.4],
+            [2, 0.7, 0.08, 2.0, 5, 3, 9, 20.0, 90.0, 0.1, 3, -0.2],
+        ]
+    )
     np.savetxt(tmp_path / "class_scores.dat", rows)
-    s = sb.load_class_scores(tmp_path)
-    assert len(s) == 2
-    assert s.jpar_spread[1] == pytest.approx(30.0)
-    assert s.status.tolist() == [1, 3]
-    assert s.trap_par[0] == pytest.approx(0.4)
+    loaded = sb.load_class_scores(tmp_path)
+    assert loaded.jpar_variation_rate == pytest.approx([0.2, 0.7])
+    assert loaded.rotation_number_drift == pytest.approx([0.03, 0.08])
+    assert loaded.jpar_sample_count.tolist() == [4, 5]
+    assert loaded.legacy_status.tolist() == [1, 3]
 
 
-# --- radial excursion -----------------------------------------------------
-
-
-def test_radial_score_rises_with_the_excursion() -> None:
-    s = scores([0.0] * 3, [0.0] * 3, [0] * 3, [1.0] * 3,
-               radial=[0.0, 0.01, 0.2], tips=[8, 8, 8])
-    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
-    assert value[0] == 0.0
-    assert 0.0 < value[1] < value[2] < 1.0
-    assert np.all(np.diff(value) > 0.0)
-
-
-def test_radial_score_needs_two_tips() -> None:
-    s = scores([0.0] * 2, [0.0] * 2, [0] * 2, [1.0] * 2,
-               radial=[0.2, 0.2], tips=[1, 2])
-    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
-    assert value[0] == 0.0
-    assert value[1] > 0.0
-    assert sb.resolution_weight(s, classifier="radial").tolist() == [0.0, 1.0]
-
-
-def test_radial_score_carries_data_where_the_class_margins_do_not() -> None:
-    """Unresolved orbits still have an excursion; that is the point."""
-    s = scores([0.0] * 4, [0.0] * 4, [sb.STATUS_UNRESOLVED] * 4, [1.0] * 4,
-               radial=[0.001, 0.01, 0.05, 0.2], tips=[4, 6, 8, 10])
-    assert sb.resolved_fraction(s, classifier="jpar") == 0.0
-    assert sb.resolved_fraction(s, classifier="radial") == 1.0
-    value = sb.radial_chaos_score(s, width=1.0, reference=0.05)
-    assert np.all(np.diff(value) > 0.0)
-
-
-def test_radial_reference_must_be_positive() -> None:
-    s = scores([0.0], [0.0], [0], [1.0])
-    for bad in (0.0, -1.0, np.nan):
-        with pytest.raises(ValueError):
-            sb.radial_chaos_score(s, width=1.0, reference=bad)
-
-
-def test_radial_overlap_orders_two_designs_by_transport() -> None:
-    n = 120
-    mu = np.linspace(0.011, 0.029, n)
-    quiet = scores([0.0] * n, [0.0] * n, [0] * n, [1.0] * n,
-                   radial=np.full(n, 0.002), tips=np.full(n, 8))
-    loud = scores([0.0] * n, [0.0] * n, [0] * n, [1.0] * n,
-                  radial=np.full(n, 0.08), tips=np.full(n, 8))
-    kwargs = dict(mu_inner=mu, mu_outer=mu, edges=EDGES, classifier="radial",
-                  chaos_width=1.0, trapped_width=0.1, bin_width=0.002,
-                  radial_reference=0.05)
-    assert (sb.smooth_barrier_overlap(quiet, quiet, **kwargs)
-            < sb.smooth_barrier_overlap(loud, loud, **kwargs))
+def test_reader_rejects_the_old_thresholded_schema(tmp_path) -> None:
+    np.savetxt(tmp_path / "class_scores.dat", np.zeros((1, 8)))
+    with pytest.raises(ValueError, match="12"):
+        sb.load_class_scores(tmp_path)
