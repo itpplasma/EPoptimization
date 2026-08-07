@@ -70,6 +70,12 @@ def test_resolution_uses_raw_score_metadata_not_legacy_status() -> None:
     assert rotation.tolist() == [0.0, 1.0, 1.0]
 
 
+def test_rotation_drift_uses_absolute_first_second_half_difference() -> None:
+    sample = scores([0.1], [-0.3])
+    values, _ = sb.score_and_resolution(sample, classifier="rotation")
+    assert values == pytest.approx([0.3])
+
+
 def test_surface_field_matches_a_hand_weighted_mean() -> None:
     sample = scores([1.0, 3.0], [0.0, 0.0])
     field = sb.surface_score_field(

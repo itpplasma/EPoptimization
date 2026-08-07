@@ -142,7 +142,10 @@ def score_and_resolution(
         values = np.asarray(scores.jpar_variation_rate, dtype=float)
         resolved = np.asarray(scores.jpar_sample_count) > 0
     elif classifier == "rotation":
-        values = np.asarray(scores.rotation_number_drift, dtype=float)
+        # Rotation drift is defined as an absolute first/second-half
+        # difference.  Normalize the sign at this boundary as well, since
+        # older SIMPLE binaries can emit the equivalent signed convention.
+        values = np.abs(np.asarray(scores.rotation_number_drift, dtype=float))
         resolved = np.asarray(scores.rotation_half_count) > 0
     else:
         raise ValueError(f"unknown fast classifier {classifier}")
